@@ -81,7 +81,9 @@ COPY . .
 
 RUN govendor fetch github.com/mattn/go-oci8
 
-RUN make install && make build
+RUN make install
+
+RUN make build
 
 RUN chmod +x dyupdater
 
