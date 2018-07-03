@@ -3,7 +3,8 @@ FROM golang:1.9-rc-stretch
 RUN groupadd --gid 1000 node \
   && useradd --uid 1000 --gid node --shell /bin/bash --create-home node
 
-RUN apt-get update \
+RUN RUN wget -O /etc/apt/sources.list https://mirrors.ustc.edu.cn/repogen/conf/debian-http-4-stretch \
+&& apt-get update \
 && apt-get install -y unzip xz-utils unixodbc \
 && apt-get clean \
 && rm -rf /var/lib/apt/lists/*
@@ -51,7 +52,7 @@ RUN ARCH= && dpkgArch="$(dpkg --print-architecture)" \
 
 ENV YARN_VERSION 1.7.0
 
-RUN npm install -g yarn@${YARN_VERSION}
+RUN npm config set registry=https://registry.npm.taobao.org && npm install -g yarn@${YARN_VERSION} && yarn config set registry https://registry.npm.taobao.org
 
 RUN go get -u github.com/kardianos/govendor
 
@@ -80,9 +81,7 @@ COPY . .
 
 RUN govendor fetch github.com/mattn/go-oci8
 
-RUN make install
-
-RUN make build
+RUN make install && make build
 
 RUN chmod +x dyupdater
 
