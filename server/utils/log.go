@@ -17,7 +17,7 @@ func ConfigLog(logfile *os.File, debug bool) {
 		)
 	} else {
 		format = logging.MustStringFormatter(
-			`%{time:2006/01/02 15:04:05.000} [%{level:.4s}] %{message}`,
+			`%{time:2006/01/02 15:04:05.000} %{shortfile}:%{shortfunc} [%{level:.4s}] %{message}`,
 		)
 	}
 	backendFormatter := logging.NewBackendFormatter(backend, format)

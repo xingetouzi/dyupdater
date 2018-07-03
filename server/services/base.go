@@ -220,11 +220,13 @@ func (this *FactorServices) handleCheck(tf *task.TaskFuture) error {
 			log.Warningf("(Task %s) { %s } [ %d , %d ] Store[%s] check failed: %s.", tf.ID, data.GetFactorID(),
 				data.GetStartTime(), data.GetEndTime(), name, err.Error())
 		}
-		newSet := mapset.NewSet()
-		for _, v := range dates {
-			newSet.Add(v)
+		if dates != nil {
+			newSet := mapset.NewSet()
+			for _, v := range dates {
+				newSet.Add(v)
+			}
+			dateSet = dateSet.Union(newSet)
 		}
-		dateSet = dateSet.Union(newSet)
 	}
 	allDates := make([]int, dateSet.Cardinality())
 	for i, v := range dateSet.ToSlice() {
@@ -389,7 +391,12 @@ func getConfigFromPath(p string) {
 	if err != nil {
 		panic(err)
 	}
-	viper.ReadConfig(file)
+	viper.SetConfigName("dyupdater")
+	viper.SetConfigType("yaml")
+	err = viper.ReadConfig(file)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func NewFactorServiceFromConfig(p string) *FactorServices {

@@ -3,9 +3,9 @@ FROM golang:1.9-rc-stretch
 RUN groupadd --gid 1000 node \
   && useradd --uid 1000 --gid node --shell /bin/bash --create-home node
 
-RUN RUN wget -O /etc/apt/sources.list https://mirrors.ustc.edu.cn/repogen/conf/debian-http-4-stretch \
+RUN wget -O /etc/apt/sources.list https://mirrors.ustc.edu.cn/repogen/conf/debian-http-4-stretch \
 && apt-get update \
-&& apt-get install -y unzip xz-utils unixodbc \
+&& apt-get install -y unzip xz-utils unixodbc unixodbc-dev libaio1 \
 && apt-get clean \
 && rm -rf /var/lib/apt/lists/*
 
@@ -59,7 +59,8 @@ RUN go get -u github.com/kardianos/govendor
 WORKDIR /go/src/fxdayu.com/dyupdater
 
 ENV ORACLE_BASE=/opt/oracle ORACLE_HOME=/opt/oracle/instantclient_11_2
-ENV PKG_CONFIG_PATH="./server:${PKG_CONFIG_PATH}" \
+
+ENV PKG_CONFIG_PATH="/go/src/fxdayu.com/dyupdater/server:${PKG_CONFIG_PATH}" \
 PATH="$ORACLE_HOME:$PATH" \
 LD_LIBRARY_PATH="$ORACLE_HOME:${LD_LIBRARY_PATH}" \
 C_INCLUDE_PATH="$ORACLE_HOME/sdk/include/:${C_INCLUDE_PATH}" \
@@ -74,17 +75,38 @@ RUN mkdir $ORACLE_BASE \
 && unzip instantclient-sdk-linux.x64-11.2.0.4.0.zip -d $ORACLE_BASE \
 && ln -s $ORACLE_HOME/libclntsh.so.11.1 /usr/lib/libclntsh.so
 
-# test
-# RUN echo $ORACLE_HOME $LD_LIBRARY_PATH $C_INCLUDE_PATH
+ENV FREETDS_VERSION=1.00.92
 
-COPY . .
+RUN wget ftp://ftp.freetds.org/pub/freetds/stable/freetds-${FREETDS_VERSION}.tar.gz \
+&& tar xf freetds-${FREETDS_VERSION}.tar.gz \
+&& cd freetds-${FREETDS_VERSION}/ \
+&& ./configure \
+&& make \
+&& make install \
+&& echo "[FreeTDS]" > tds.driver.template \
+&& echo "Description     = Open source FreeTDS driver" >> tds.driver.template \
+&& echo "Driver          =/usr/local/lib/libtdsodbc.so" >> tds.driver.template \
+&& odbcinst -i -d -f tds.driver.template
+
+# test
+# RUN echo $ORACLE_HOME $LD_LIBRARY_PATH $C_INCLUDE_PATH $PKG_CONFIG_PATH
+
+COPY ./client/package.json ./client/
+
+COPY ./vendor/vendor.json ./vendor/
+
+COPY ./Makefile ./
 
 RUN govendor fetch github.com/mattn/go-oci8
 
-RUN make install
+RUN make install-client
+
+RUN make install-server
+
+COPY . .
 
 RUN make build
 
-RUN chmod +x dyupdater
+RUN chmod +x dyupdater && cp dyupdater /usr/local/bin
 
 CMD ["dyupdater"]

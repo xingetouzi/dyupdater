@@ -128,7 +128,8 @@ func GetCeleryService() *CeleryService {
 func (helper *CeleryHelper) Publish(taskID string, task string, routerKey string, payload []byte) (string, error) {
 	host := helper.config.Host
 	url := url.URL{Scheme: "http", Host: host, Path: "/api/task/async-apply/" + task}
-	req, err := http.NewRequest("POST", url.String(), bytes.NewBuffer(payload))
+	buffer := bytes.NewBuffer(payload)
+	req, err := http.NewRequest("POST", url.String(), buffer)
 	if err != nil {
 		return "", err
 	}

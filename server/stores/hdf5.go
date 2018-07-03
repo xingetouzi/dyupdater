@@ -181,7 +181,7 @@ func (s *HDF5Store) Check(factor models.Factor, index []int) ([]int, error) {
 		}
 		return result.Index, result.Error
 	case <-time.After(time.Duration(s.config.TaskCheckTimeout) * time.Second):
-		return nil, fmt.Errorf("task timeout after 180 seconds")
+		return nil, fmt.Errorf("hdf5 check task timeout after %d seconds", s.config.TaskCheckTimeout)
 	}
 }
 
@@ -221,7 +221,7 @@ func (s *HDF5Store) Update(factor models.Factor, factorValue models.FactorValue,
 		}
 		return result.Count, result.Error
 	case <-time.After(time.Duration(s.config.TaskUpdateTimeout) * time.Second):
-		return 0, fmt.Errorf("task timeout")
+		return 0, fmt.Errorf("hdf5 update task timeout after %d seconds", s.config.TaskUpdateTimeout)
 	}
 }
 
