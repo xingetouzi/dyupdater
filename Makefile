@@ -56,11 +56,15 @@ lint:
 	@cd client && npm run lint || true
 	@golint server/... || true
 
-install:
+install: install-client install-server
+
+install-client:
 	@cd client && yarn install
+
+install-server:
 	@govendor fetch -v github.com/olebedev/on
 	@govendor fetch -v github.com/jteeuwen/go-bindata/^
-	@govendor fetch -v +out
+	@govendor fetch -v +all
 
 ifdef GLIDE
 	@glide install

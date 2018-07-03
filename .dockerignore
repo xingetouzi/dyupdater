@@ -24,6 +24,7 @@ dyupdater
 bindata.go
 
 vendor/*/
+!vendor/vendor.json
 debug
 debug.*
 data
