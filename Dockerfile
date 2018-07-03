@@ -3,8 +3,7 @@ FROM golang:1.9-rc-stretch
 RUN groupadd --gid 1000 node \
   && useradd --uid 1000 --gid node --shell /bin/bash --create-home node
 
-RUN wget -O /etc/apt/sources.list https://mirrors.ustc.edu.cn/repogen/conf/debian-http-4-stretch \
-&& apt-get update \
+RUN apt-get update \
 && apt-get install -y unzip xz-utils \
 && apt-get clean \
 && rm -rf /var/lib/apt/lists/*
@@ -65,9 +64,9 @@ LD_LIBRARY_PATH="$ORACLE_HOME:${LD_LIBRARY_PATH}" \
 C_INCLUDE_PATH="$ORACLE_HOME/sdk/include/:${C_INCLUDE_PATH}" \
 TNS_ADMIN=$ORACLE_HOME/network/admin NLS_LANG=AMERICAN_AMERICA.UTF8
 
-RUN wget http://download.oracle.com/otn/linux/instantclient/11204/instantclient-basic-linux.x64-11.2.0.4.0.zip
+RUN wget -q https://github.com/bumpx/oracle-instantclient/raw/master/instantclient-basic-linux.x64-11.2.0.4.0.zip
 
-RUN wget http://download.oracle.com/otn/linux/instantclient/11204/instantclient-sdk-linux.x64-11.2.0.4.0.zip
+RUN wget -q https://github.com/bumpx/oracle-instantclient/raw/master/instantclient-sdk-linux.x64-11.2.0.4.0.zip
 
 RUN mkdir $ORACLE_BASE \
 && unzip instantclient-basic-linux.x64-11.2.0.4.0.zip -d $ORACLE_BASE \
@@ -77,7 +76,7 @@ RUN mkdir $ORACLE_BASE \
 # test
 # RUN echo $ORACLE_HOME $LD_LIBRARY_PATH $C_INCLUDE_PATH
 
-RUN COPY . .
+COPY . .
 
 RUN govendor fetch github.com/mattn/go-oci8
 
