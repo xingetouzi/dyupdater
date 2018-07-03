@@ -1,0 +1,16 @@
+# Package Information for pkg-config
+
+prefix=/devel/target/1.0
+exec_prefix=${prefix}
+libdir=/opt/oracle/instantclient_11_2/
+includedir=/opt/oracle/instantclient_11_2/sdk/include
+
+glib_genmarshal=glib-genmarshal
+gobject_query=gobject-query
+glib_mkenums=glib-mkenums
+
+Name: oci8
+Description: oci8 library
+Libs: -L${libdir} -lclntsh
+Cflags: -I${includedir}
+Version: 11.2
