@@ -110,7 +110,7 @@ func (s *HDF5Store) handleCheckResult() {
 			data := make([]int, 0)
 			err := json.Unmarshal([]byte(rep.Result), &data)
 			if err != nil {
-				log.Error(err)
+				log.Error(err.Error())
 				ret = checkResult{
 					Index: nil,
 					Error: errors.New(rep.Error),
@@ -141,7 +141,7 @@ func (s *HDF5Store) handleUpdateResult() {
 			var data int
 			err := json.Unmarshal([]byte(rep.Result), &data)
 			if err != nil {
-				log.Error(err)
+				log.Error(err.Error())
 				ret = updateResult{
 					Count: 0,
 					Error: errors.New(rep.Error),

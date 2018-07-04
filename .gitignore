@@ -23,7 +23,11 @@ node_modules
 dyupdater
 bindata.go
 
-vendor/*/
 debug
 debug.*
 data
+
+# vendor and backup
+vendor/*/
+_vendor*
+Gopkg.lock

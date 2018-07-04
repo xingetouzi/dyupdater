@@ -133,7 +133,7 @@ func (calculator *CeleryCalculator) handleResult() {
 			err := parseBody(rep.Result, &data)
 			result := task.CalTaskResult{FactorValue: data}
 			if err != nil {
-				log.Error(err)
+				log.Error(err.Error())
 				ret = &task.TaskResult{
 					ID:     celeryResult.ID,
 					Type:   task.TaskTypeCal,

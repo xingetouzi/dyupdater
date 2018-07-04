@@ -99,7 +99,7 @@ func (s *CSVStore) readFactor(factor models.Factor) factorValueRecords {
 	}
 	defer file.Close()
 	if err := gocsv.UnmarshalFile(file, &records); err != nil {
-		log.Error(err)
+		log.Error(err.Error())
 		return factorValueRecords{}
 	}
 	return records

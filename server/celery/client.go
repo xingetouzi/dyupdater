@@ -65,7 +65,7 @@ func (c *FlowerWsClient) readPump() {
 				log.Errorf("error: %v", err)
 				return
 			}
-			log.Error(err)
+			log.Error(err.Error())
 			continue
 		}
 		c.read <- message
@@ -81,7 +81,7 @@ func (c *FlowerWsClient) Run() {
 		conn, _, err := websocket.DefaultDialer.Dial(c.url, nil)
 		c.conn = conn
 		if err != nil {
-			log.Error(err)
+			log.Error(err.Error())
 		} else {
 			retry = 2
 			c.readPump()

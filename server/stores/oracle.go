@@ -76,20 +76,20 @@ func (s *OracleStore) creatTable(name string) error {
 	buf := new(bytes.Buffer)
 	err = tmpl.Execute(buf, map[string]string{"username": s.config.Db, "tablename": name})
 	if err != nil {
-		log.Error(err)
+		log.Error(err.Error())
 		return err
 	}
 	str := buf.String()
 	stmt, err := s.helper.DB.Prepare(str)
 	if err != nil {
-		log.Error(err)
+		log.Error(err.Error())
 		return err
 	}
 	_, err = stmt.Exec()
 	if err != nil {
 		errMsg := err.Error()
 		if !strings.HasPrefix(errMsg, "ORA-00955") { // ORA-00955: name is already used by an existing object
-			log.Error(err)
+			log.Error(err.Error())
 			return err
 		}
 	}

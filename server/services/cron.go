@@ -81,7 +81,7 @@ func (cs *CronService) worker() {
 				if ct.Start == 0 && ct.StartDelta != 0 {
 					dr.Start, err = utils.Datetoi(now.Add(-time.Duration(ct.StartDelta) * time.Second))
 					if err != nil {
-						log.Error(err)
+						log.Error(err.Error())
 						continue
 					}
 				}
@@ -91,7 +91,7 @@ func (cs *CronService) worker() {
 				if ct.End == 0 && ct.EndDelta != 0 {
 					dr.End, err = utils.Datetoi(now.Add(-time.Duration(ct.EndDelta) * time.Second))
 					if err != nil {
-						log.Error(err)
+						log.Error(err.Error())
 						continue
 					}
 				}

@@ -35,12 +35,12 @@ func (helper *SQLConnectHelper) Connect() {
 		db, err := sql.Open(helper.driver, helper.url)
 		if err != nil {
 			log.Infof("Connect failed to %s host: %s", helper.name, helper.url)
-			log.Error(err)
+			log.Error(err.Error())
 		}
 		err = db.Ping()
 		if err != nil {
 			log.Infof("Connect failed to %s host: %s", helper.name, helper.url)
-			log.Error(err)
+			log.Error(err.Error())
 			db.Close()
 		} else {
 			log.Infof("Connect success to %s host: %s", helper.name, helper.url)

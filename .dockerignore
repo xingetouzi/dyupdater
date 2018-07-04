@@ -23,10 +23,13 @@ node_modules
 dyupdater
 bindata.go
 
-vendor/*/
-!vendor/vendor.json
 debug
 debug.*
 data
 
+# vendor and backup
+vendor/*/
+_vendor*
+
 Dockerfile
+Dockerfile.*

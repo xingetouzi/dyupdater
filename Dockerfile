@@ -53,7 +53,7 @@ ENV YARN_VERSION 1.7.0
 
 RUN npm install -g yarn@${YARN_VERSION}
 
-RUN go get -u github.com/kardianos/govendor
+RUN go get -u github.com/golang/dep/cmd/dep
 
 WORKDIR /go/src/fxdayu.com/dyupdater
 
@@ -92,11 +92,9 @@ RUN wget ftp://ftp.freetds.org/pub/freetds/stable/freetds-${FREETDS_VERSION}.tar
 
 COPY ./client/package.json ./client/
 
-COPY ./vendor/vendor.json ./vendor/
+COPY ./Gopkg.toml ./
 
 COPY ./Makefile ./
-
-RUN govendor fetch github.com/mattn/go-oci8
 
 RUN make install-client
 
@@ -108,4 +106,4 @@ RUN make build
 
 RUN chmod +x dyupdater && cp dyupdater /usr/local/bin
 
-CMD ["dyupdater"]
+CMD ["dyupdater", "run", "-H", "0.0.0.0"]

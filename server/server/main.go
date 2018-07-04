@@ -25,15 +25,18 @@ func handleCurrentUser(c *gin.Context) {
 	c.JSON(200, gin.H{})
 }
 
-func Serve(logfile *os.File, fs *services.FactorServices, addr ...string) {
+func Serve(debug bool, logfile *os.File, fs *services.FactorServices, addr ...string) {
 	if logfile != nil {
 		gin.DisableConsoleColor()
 		gin.DefaultWriter = io.MultiWriter(logfile)
+	}
+	if !debug {
+		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.Default()
 	r.Use(static.Serve("/", BinaryFileSystem("")))
 	r.GET("/api/tasks", handleTasks(fs))
 	r.GET("/api/config", handleConfig)
 	r.GET("/api/currentUser", handleCurrentUser)
-	r.Run(addr...) // listen and serve on 0.0.0.0:8080
+	r.Run(addr...) // listen and serve on 127.0.0.1:8080
 }

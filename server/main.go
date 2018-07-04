@@ -74,7 +74,7 @@ func main() {
 				}
 				addrs := []string{fmt.Sprintf("%s:%d", host, port)}
 				cs.Run()
-				server.Serve(accessLogFile, fs, addrs...)
+				server.Serve(debug, accessLogFile, fs, addrs...)
 			}
 			return
 		case "check":

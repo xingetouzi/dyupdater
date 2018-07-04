@@ -15,7 +15,6 @@ APP_NAME      = $(shell pwd | sed 's:.*/::')
 TARGET        = $(APP_NAME)
 GIT_HASH      = $(shell git rev-parse HEAD)
 LDFLAGS       = -w -X main.commitHash=$(GIT_HASH)
-GLIDE         := $(shell command -v glide 2> /dev/null)
 
 build: $(ON) $(GO_BINDATA) clean $(TARGET)
 
@@ -62,12 +61,6 @@ install-client:
 	@cd client && yarn install
 
 install-server:
-	@govendor fetch -v github.com/olebedev/on
-	@govendor fetch -v github.com/jteeuwen/go-bindata/^
-	@govendor fetch -v +all
-
-ifdef GLIDE
-	@glide install
-else
-	$(warning "Skipping installation of Go dependencies: glide is not installed")
-endif
+	@dep ensure -v --update
+	@dep ensure -v --add github.com/olebedev/on
+	@dep ensure -v --add github.com/jteeuwen/go-bindata/^

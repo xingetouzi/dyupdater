@@ -113,7 +113,7 @@ func (indexer *WindMssqlIndexer) updateTradeDates() {
 	sqlStatement := fmt.Sprintf("SELECT DISTINCT TRADE_DAYS FROM \"%s\".dbo.ASHARECALENDAR", indexer.config.Db)
 	rows, err := con.Query(sqlStatement)
 	if err != nil {
-		log.Error(err)
+		log.Error(err.Error())
 		return
 	}
 	defer rows.Close()
@@ -122,7 +122,7 @@ func (indexer *WindMssqlIndexer) updateTradeDates() {
 		var i int
 		err := rows.Scan(&i)
 		if err != nil {
-			log.Error(err)
+			log.Error(err.Error())
 			return
 		}
 		index = append(index, i)

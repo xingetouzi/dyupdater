@@ -70,7 +70,7 @@ func (store *MongoStore) Update(factor models.Factor, factorValue models.FactorV
 	defer func() {
 		if e := recover(); e != nil {
 			err = e.(error)
-			log.Error(err)
+			log.Error(err.Error())
 		}
 	}()
 	conn := store.session.Clone()

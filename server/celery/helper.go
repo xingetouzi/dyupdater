@@ -215,7 +215,7 @@ func (helper *CeleryHelper) CleanBroker() {
 		for i := 0; i < 3; i++ {
 			count, err := helper.broker.QueuePurge(name, false)
 			if err != nil {
-				log.Error(err)
+				log.Error(err.Error())
 			} else {
 				log.Infof("Purge %d task in queue %s", count, name)
 				break
@@ -292,7 +292,7 @@ func (helper *CeleryHelper) revokeTask(task string) {
 func (helper *CeleryHelper) putResult(result *CeleryTaskResponse) {
 	info, err := helper.store.Get(result.CeleryID)
 	if err != nil {
-		log.Error(err)
+		log.Error(err.Error())
 		return
 	}
 	ch := helper.GetOutput(info.routerKey)
@@ -305,7 +305,11 @@ func (helper *CeleryHelper) putResult(result *CeleryTaskResponse) {
 func (helper *CeleryHelper) fetchTask(t string) *CeleryTaskResponse {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Error(r)
+			if err, ok := r.(error); ok {
+				log.Error(err.Error())
+			} else {
+				log.Error("Unknown error: %s", r)
+			}
 		}
 	}()
 	host := helper.config.Host
@@ -317,7 +321,7 @@ func (helper *CeleryHelper) fetchTask(t string) *CeleryTaskResponse {
 		respData := new(CeleryTaskResponse)
 		err := json.Unmarshal(body, respData)
 		if err != nil {
-			log.Error(err)
+			log.Error(err.Error())
 			respData.Error = err.Error()
 			return respData
 		}

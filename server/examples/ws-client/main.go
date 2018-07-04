@@ -17,7 +17,7 @@ func main() {
 	read := make(chan *calculators.FlowerEvent, 20)
 	err := calculators.OpenWs(read, url.String())
 	if err != nil {
-		log.Error(err)
+		log.Error(err.Error())
 	}
 	for m := range read {
 		log.Info(*m)

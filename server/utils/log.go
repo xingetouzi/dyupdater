@@ -13,11 +13,11 @@ func ConfigLog(logfile *os.File, debug bool) {
 	var format logging.Formatter
 	if debug {
 		format = logging.MustStringFormatter(
-			`%{time:2006/01/02 15:04:05.000} %{longfile}:%{shortfunc} [%{level:.4s}] %{message}`,
+			`%{time:2006/01/02 15:04:05.000} [%{level:.4s}] %{longfile}:%{shortfunc} | %{message}`,
 		)
 	} else {
 		format = logging.MustStringFormatter(
-			`%{time:2006/01/02 15:04:05.000} %{shortfile}:%{shortfunc} [%{level:.4s}] %{message}`,
+			`%{time:2006/01/02 15:04:05.000} [%{level:.4s}] %{shortfile}:%{shortfunc} | %{message}`,
 		)
 	}
 	backendFormatter := logging.NewBackendFormatter(backend, format)
