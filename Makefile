@@ -62,5 +62,4 @@ install-client:
 
 install-server:
 	@dep ensure -v --update
-	@dep ensure -v --add github.com/olebedev/on
-	@dep ensure -v --add github.com/jteeuwen/go-bindata/^
+
