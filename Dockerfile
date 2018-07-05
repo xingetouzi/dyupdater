@@ -90,17 +90,17 @@ RUN wget ftp://ftp.freetds.org/pub/freetds/stable/freetds-${FREETDS_VERSION}.tar
 # test
 # RUN echo $ORACLE_HOME $LD_LIBRARY_PATH $C_INCLUDE_PATH $PKG_CONFIG_PATH
 
-COPY ./client/package.json ./client/
-
-COPY ./Gopkg.toml ./
-
 COPY ./Makefile ./
+
+COPY ./client/package.json ./client/
 
 RUN make install-client
 
-RUN make install-server
+COPY ./Gopkg.toml ./
 
 COPY . .
+
+RUN make install-server
 
 RUN make build
 

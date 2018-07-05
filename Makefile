@@ -61,6 +61,6 @@ install-client:
 	@cd client && yarn install
 
 install-server:
-	@dep ensure -v --update
+	@dep ensure -v
 	@dep ensure -v --add github.com/olebedev/on
-	@dep ensure -v --add github.com/jteeuwen/go-bindata/^
+	@dep ensure -v --add github.com/jteeuwen/go-bindata/
