@@ -30,6 +30,11 @@ type CeleryTaskInput struct {
 	Payload interface{}
 }
 
+type celeryExec struct {
+	Type    string `json:"exc_type"`
+	Message string `json:"exc_message"`
+}
+
 type CeleryTaskResult struct {
 	ID       string
 	Response CeleryTaskResponse
@@ -57,6 +62,7 @@ type CeleryHelper struct {
 	clients    []*FlowerWsClient
 	eventLimit chan bool
 	event      chan *FlowerEvent
+	eventB     chan string
 	out        map[string]chan CeleryTaskResult
 	term       chan bool
 }
@@ -263,26 +269,34 @@ func (helper *CeleryHelper) Run() {
 			}
 		}
 	}()
-	go helper.listen()
-	go helper.openWs()
+	// listen to the celery result to be set.
+	// NOTE deprecate
+	// go helper.listen()
+	// go helper.openWs()
+	helper.subscribe()
 }
 
-func (helper *CeleryHelper) abortTask(task string) {
+// NOTE deprecate
+// func (helper *CeleryHelper) abortTask(taskID string) {
+// 	host := helper.config.Host
+// 	url := url.URL{Scheme: "http", Host: host, Path: "/api/task/abort/" + task}
+// 	req, _ := http.NewRequest("POST", url.String(), bytes.NewBuffer([]byte{}))
+// 	req.Header.Set("Content-Type", "application/json")
+// 	client := &http.Client{}
+// 	client.Do(req)
+// }
+
+func (helper *CeleryHelper) abortTask(taskID string) {
+	helper.backend.AbortTask(taskID)
+}
+
+func (helper *CeleryHelper) deleteTask(taskID string) {
+	helper.backend.DeleteResult(taskID)
+}
+
+func (helper *CeleryHelper) revokeTask(taskID string) {
 	host := helper.config.Host
-	url := url.URL{Scheme: "http", Host: host, Path: "/api/task/abort/" + task}
-	req, _ := http.NewRequest("POST", url.String(), bytes.NewBuffer([]byte{}))
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{}
-	client.Do(req)
-}
-
-func (helper *CeleryHelper) deleteTask(task string) {
-	helper.backend.DeleteResult(task)
-}
-
-func (helper *CeleryHelper) revokeTask(task string) {
-	host := helper.config.Host
-	url := url.URL{Scheme: "http", Host: host, Path: fmt.Sprintf("/api/task/revoke/%s?terminate=true", task)}
+	url := url.URL{Scheme: "http", Host: host, Path: fmt.Sprintf("/api/task/revoke/%s?terminate=true", taskID)}
 	req, _ := http.NewRequest("POST", url.String(), bytes.NewBuffer([]byte{}))
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{}
@@ -302,45 +316,27 @@ func (helper *CeleryHelper) putResult(result *CeleryTaskResponse) {
 	log.Debugf("(Task %s) celery task %s: %s and ABORTED", info.taskID, result.CeleryID, result.State)
 }
 
-func (helper *CeleryHelper) fetchTask(t string) *CeleryTaskResponse {
-	defer func() {
-		if r := recover(); r != nil {
-			if err, ok := r.(error); ok {
-				log.Error(err.Error())
-			} else {
-				log.Error("Unknown error: %s", r)
-			}
-		}
-	}()
-	host := helper.config.Host
-	url := url.URL{Scheme: "http", Host: host, Path: "/api/task/result/" + t}
-	resp, _ := http.Get(url.String())
-	if resp.StatusCode/100 == 2 {
-		body, _ := ioutil.ReadAll(resp.Body)
-		defer resp.Body.Close()
-		respData := new(CeleryTaskResponse)
-		err := json.Unmarshal(body, respData)
+func (helper *CeleryHelper) fetchTask(task string) (*CeleryTaskResponse, error) {
+	res, err := helper.backend.GetResult(task)
+	if err != nil {
+		return nil, err
+	}
+	respData := new(CeleryTaskResponse)
+	respData.CeleryID = res.ID
+	respData.State = res.Status
+	if res.Traceback != nil {
+		exec := new(celeryExec)
+		b, _ := json.Marshal(res.Result)
+		err := json.Unmarshal(b, exec)
 		if err != nil {
 			log.Error(err.Error())
-			respData.Error = err.Error()
-			return respData
 		}
-		switch respData.State {
-		case "PENDING":
-			return nil
-		case "SUCCESS":
-			return respData
-		case "FAILURE":
-			respData.Error = respData.Result
-			respData.Result = ""
-			return respData
-		case "ABORTED":
-			respData.Error = "task has already been aborted"
-			respData.Result = ""
-			return respData
-		}
+		respData.Error = fmt.Sprintf("%s %s : %s", res.Traceback.(string), exec.Type, exec.Message)
+	} else if res.Result != nil {
+		// TODO fix Result interface
+		respData.Result = res.Result.(string)
 	}
-	return nil
+	return respData, nil
 }
 
 func (helper *CeleryHelper) queryAll() {
@@ -350,8 +346,8 @@ func (helper *CeleryHelper) queryAll() {
 		}
 		helper.eventLimit <- true
 		go func() {
-			r := helper.fetchTask(tid)
-			if r != nil {
+			r, err := helper.fetchTask(tid)
+			if err == nil {
 				helper.putResult(r)
 			}
 			<-helper.eventLimit
@@ -369,6 +365,40 @@ func (helper *CeleryHelper) GetOutput(routerkey string) chan CeleryTaskResult {
 	return ch
 }
 
+func (helper *CeleryHelper) subscribe() {
+	event := make(chan string, 100000)
+	for {
+		err := helper.backend.Subscribe(event)
+		if err == nil {
+			break
+		}
+		log.Errorf("Unable to subscribe the redis backend due to: %s!!!", err.Error())
+		time.Sleep(10 * time.Second)
+	}
+	go func() {
+		for taskID := range event {
+			log.Debugf("Receive celery Event: %s", taskID)
+			if !helper.store.IsSet(taskID) {
+				log.Debugf("Skip unrelated celery Event: %s", taskID)
+				continue
+			}
+			helper.eventLimit <- true
+			go func(id string) {
+				log.Debugf("Query celery task: %s", id)
+				for r, err := helper.fetchTask(id); ; {
+					if err == nil {
+						helper.putResult(r)
+						break
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+				<-helper.eventLimit
+			}(taskID)
+		}
+	}()
+}
+
+//NOTE deprecate
 func (helper *CeleryHelper) listen() {
 	for e := range helper.event {
 		log.Debugf("Receive celery Event: %s", e.UUID)
@@ -379,8 +409,8 @@ func (helper *CeleryHelper) listen() {
 		helper.eventLimit <- true
 		go func(id string) {
 			log.Debugf("Query celery task: %s", id)
-			for r := helper.fetchTask(id); ; {
-				if r != nil {
+			for r, err := helper.fetchTask(id); ; {
+				if err == nil {
 					helper.putResult(r)
 					break
 				}
@@ -391,6 +421,15 @@ func (helper *CeleryHelper) listen() {
 	}
 }
 
+//NOTE deprecate
+func (helper *CeleryHelper) openWs() {
+	host := helper.config.Host
+	successURL := url.URL{Scheme: "ws", Host: host, Path: "/api/task/events/task-succeeded/"}
+	helper.clients = append(helper.clients, OpenWs(helper.event, successURL.String()))
+	failedURL := url.URL{Scheme: "ws", Host: host, Path: "/api/task/events/task-failed/"}
+	helper.clients = append(helper.clients, OpenWs(helper.event, failedURL.String()))
+}
+
 func (helper *CeleryHelper) GetQueue(task string, routerKey string) *CeleryQueue {
 	q := &CeleryQueue{}
 	q.helper = helper
@@ -398,14 +437,6 @@ func (helper *CeleryHelper) GetQueue(task string, routerKey string) *CeleryQueue
 	q.routerKey = routerKey
 	q.Output = helper.GetOutput(routerKey)
 	return q
-}
-
-func (helper *CeleryHelper) openWs() {
-	host := helper.config.Host
-	successURL := url.URL{Scheme: "ws", Host: host, Path: "/api/task/events/task-succeeded/"}
-	helper.clients = append(helper.clients, OpenWs(helper.event, successURL.String()))
-	failedURL := url.URL{Scheme: "ws", Host: host, Path: "/api/task/events/task-failed/"}
-	helper.clients = append(helper.clients, OpenWs(helper.event, failedURL.String()))
 }
 
 func (helper *CeleryHelper) Close() {

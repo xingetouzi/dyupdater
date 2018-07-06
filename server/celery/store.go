@@ -35,7 +35,7 @@ func (taskStore *inMemoryTaskMapStore) Get(id string) (*taskInfo, error) {
 	defer taskStore.lock.RUnlock()
 	r, ok := taskStore.tasks[id]
 	if !ok {
-		return nil, fmt.Errorf("No cal task with id %s found", id)
+		return nil, fmt.Errorf("No cal task with id (%s) found", id)
 	}
 	return r, nil
 }

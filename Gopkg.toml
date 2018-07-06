@@ -24,6 +24,8 @@
 #   go-tests = true
 #   unused-packages = true
 
+required = ["github.com/olebedev/on", "github.com/jteeuwen/go-bindata/go-bindata"]
+
 [[constraint]]
   branch = "master"
   name = "github.com/alexbrainman/odbc"
