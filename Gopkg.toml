@@ -24,8 +24,6 @@
 #   go-tests = true
 #   unused-packages = true
 
-required = ["github.com/olebedev/on", "github.com/jteeuwen/go-bindata", "github.com/jteeuwen/go-bindata/go-bindata"]
-
 [[constraint]]
   branch = "master"
   name = "github.com/alexbrainman/odbc"
@@ -114,3 +112,11 @@ required = ["github.com/olebedev/on", "github.com/jteeuwen/go-bindata", "github.
   name = "gopkg.in/fsnotify.v1"
   version = "1.4.7"
   source = "https://github.com/fsnotify/fsnotify"
+
+[[override]]
+  branch = "master"
+  name = "github.com/jteeuwen/go-bindata"
+
+[[override]]
+  name = "github.com/olebedev/on"
+  version = "0.2.0"
