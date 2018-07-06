@@ -96,7 +96,7 @@ func (cs *CronService) worker() {
 					}
 				}
 				cs.fs.CheckAll(dr)
-				cs.fs.Wait(3600)
+				// cs.fs.Wait(3600)
 			}
 		case <-time.After(10 * time.Second):
 			{

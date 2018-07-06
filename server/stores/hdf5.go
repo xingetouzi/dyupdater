@@ -124,6 +124,8 @@ func (s *HDF5Store) handleCheckResult() {
 		ch := s.getTaskChan(celeryResult.ID)
 		if ch != nil {
 			ch <- ret
+		} else {
+			log.Warning("Unrelated celery task %s of stores.hdf5-check", celeryResult.ID)
 		}
 	}
 }
@@ -155,6 +157,8 @@ func (s *HDF5Store) handleUpdateResult() {
 		ch := s.getTaskChan(celeryResult.ID)
 		if ch != nil {
 			ch <- ret
+		} else {
+			log.Warning("Unrelated celery task %s of stores.hdf5-update", celeryResult.ID)
 		}
 	}
 }

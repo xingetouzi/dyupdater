@@ -24,7 +24,7 @@
 #   go-tests = true
 #   unused-packages = true
 
-required = ["github.com/olebedev/on", "github.com/jteeuwen/go-bindata"]
+required = ["github.com/olebedev/on", "github.com/jteeuwen/go-bindata", "github.com/jteeuwen/go-bindata/go-bindata"]
 
 [[constraint]]
   branch = "master"
