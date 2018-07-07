@@ -122,3 +122,7 @@ required = ["github.com/olebedev/on", "github.com/jteeuwen/go-bindata/go-bindata
 [[override]]
   name = "github.com/olebedev/on"
   version = "0.2.0"
+
+[[constraint]]
+  name = "github.com/panjf2000/ants"
+  version = "3.6.0"

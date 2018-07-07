@@ -17,10 +17,10 @@ const taskTypeText = {
   [taskType.UPDATE]: '更新',
 };
 const taskTypeColor = {
-  [taskType.CHECK]: "#0033cc",
-  [taskType.CAL]: "#ff6600",
-  [taskType.UPDATE]: "#00cc00",
-}
+  [taskType.CHECK]: '#0033cc',
+  [taskType.CAL]: '#ff6600',
+  [taskType.UPDATE]: '#00cc00',
+};
 const statusMap = {
   [taskState.PENDING]: 'processing',
   [taskState.SUCCESS]: 'success',
@@ -149,7 +149,9 @@ export default class TaskTableList extends PureComponent {
             value: 2,
           },
         ],
-        render: item => <div style={{"color":taskTypeColor[item]}}>{taskTypeText[item] || 'UNKNOWN'}</div>,
+        render: item => (
+          <div style={{ color: taskTypeColor[item] }}>{taskTypeText[item] || 'UNKNOWN'}</div>
+        ),
         width: 90,
       },
       {
@@ -162,7 +164,9 @@ export default class TaskTableList extends PureComponent {
         title: '时间范围',
         render: (item, record) => (
           <div>
-            <span>{record.start}</span><br/><span>{record.end}</span>
+            <span>{record.start}</span>
+            <br />
+            <span>{record.end}</span>
           </div>
         ),
         width: 100,

@@ -10,6 +10,7 @@ import (
 	"fxdayu.com/dyupdater/server/common"
 	"fxdayu.com/dyupdater/server/task"
 	"fxdayu.com/dyupdater/server/utils"
+	"github.com/panjf2000/ants"
 	"github.com/spf13/viper"
 )
 
@@ -25,9 +26,6 @@ type TaskStore interface {
 
 type TaskScheduler interface {
 	common.Configable
-	handle(tf *task.TaskFuture)
-	onFailed(tf *task.TaskFuture, err error)
-	onSuccess(output task.TaskResult)
 	SetTaskStore(TaskStore)
 	Publish(parent *task.TaskFuture, input task.TaskInput) *task.TaskFuture
 	SetInLimit(t int, limit int)
@@ -50,21 +48,27 @@ type BaseScheduler struct {
 	failedHandlers  map[int][]func(task.TaskFuture, error)
 	in              chan string
 	out             chan task.TaskResult
-	inLimit         map[int]chan bool
-	outLimit        map[int]chan bool
-	count           int
-	waitChans       *list.List
-	waitLock        *sync.Mutex
+	// NOTE: deprecated
+	// inLimit         map[int]chan bool
+	// outLimit        map[int]chan bool
+	inPool    map[int]*ants.Pool
+	outPool   map[int]*ants.Pool
+	count     int
+	waitChans *list.List
+	waitLock  *sync.Mutex
 }
 
 func (scheduler *BaseScheduler) Init(config *viper.Viper) {
 	scheduler.handlers = make(map[int][]func(*task.TaskFuture) error, 0)
 	scheduler.successHandlers = make(map[int][]func(task.TaskFuture, task.TaskResult) error, 0)
 	scheduler.failedHandlers = make(map[int][]func(task.TaskFuture, error), 0)
-	scheduler.inLimit = make(map[int]chan bool)
-	scheduler.outLimit = make(map[int]chan bool)
-	scheduler.in = make(chan string, 100000)
-	scheduler.out = make(chan task.TaskResult, 100000)
+	// NOTE: deprecated
+	// scheduler.inLimit = make(map[int]chan bool)
+	// scheduler.outLimit = make(map[int]chan bool)
+	scheduler.in = make(chan string, 1000000)
+	scheduler.out = make(chan task.TaskResult, 1000000)
+	scheduler.inPool = make(map[int]*ants.Pool)
+	scheduler.outPool = make(map[int]*ants.Pool)
 	scheduler.waitLock = &sync.Mutex{}
 	scheduler.waitChans = list.New()
 }
@@ -74,30 +78,70 @@ func (scheduler *BaseScheduler) GetOutputChan() chan task.TaskResult {
 }
 
 func (scheduler *BaseScheduler) SetInLimit(t int, limit int) {
-	scheduler.inLimit[t] = make(chan bool, limit)
+	// NOTE: deprecated
+	// scheduler.inLimit[t] = make(chan bool, limit)
+	pool, err := ants.NewPool(limit)
+	if err != nil {
+		panic(err)
+	}
+	scheduler.inPool[t] = pool
 }
 
 func (scheduler *BaseScheduler) SetOutLimit(t int, limit int) {
-	scheduler.outLimit[t] = make(chan bool, limit)
+	// NOTE: deprecated
+	// scheduler.outLimit[t] = make(chan bool, limit)
+	pool, err := ants.NewPool(limit)
+	if err != nil {
+		panic(err)
+	}
+	scheduler.outPool[t] = pool
 }
 
-func (scheduler *BaseScheduler) getInLimitChan(t int) chan bool {
-	limitChan, ok := scheduler.inLimit[t]
+func (scheduler *BaseScheduler) getInPool(taskType int) *ants.Pool {
+	pool, ok := scheduler.inPool[taskType]
 	if !ok {
-		limitChan = make(chan bool, runtime.NumCPU()*4)
-		scheduler.inLimit[t] = limitChan
+		var err error
+		pool, err = ants.NewPool(runtime.NumCPU() * 4)
+		if err != nil {
+			panic(err)
+		}
+		scheduler.inPool[taskType] = pool
 	}
-	return limitChan
+	return pool
 }
 
-func (scheduler *BaseScheduler) getOutLimitChan(t int) chan bool {
-	limitChan, ok := scheduler.outLimit[t]
+func (scheduler *BaseScheduler) getOutPool(taskType int) *ants.Pool {
+	pool, ok := scheduler.outPool[taskType]
 	if !ok {
-		limitChan = make(chan bool, runtime.NumCPU()*4)
-		scheduler.outLimit[t] = limitChan
+		var err error
+		pool, err = ants.NewPool(runtime.NumCPU() * 4)
+		if err != nil {
+			panic(err)
+		}
+		scheduler.outPool[taskType] = pool
 	}
-	return limitChan
+	return pool
 }
+
+// NOTE: deprecated
+//
+// func (scheduler *BaseScheduler) getInLimitChan(t int) chan bool {
+// 	limitChan, ok := scheduler.inLimit[t]
+// 	if !ok {
+// 		limitChan = make(chan bool, runtime.NumCPU()*4)
+// 		scheduler.inLimit[t] = limitChan
+// 	}
+// 	return limitChan
+// }
+
+// func (scheduler *BaseScheduler) getOutLimitChan(t int) chan bool {
+// 	limitChan, ok := scheduler.outLimit[t]
+// 	if !ok {
+// 		limitChan = make(chan bool, runtime.NumCPU()*4)
+// 		scheduler.outLimit[t] = limitChan
+// 	}
+// 	return limitChan
+// }
 
 func (scheduler *BaseScheduler) SetTaskStore(taskStore TaskStore) {
 	scheduler.taskStore = taskStore
@@ -107,19 +151,31 @@ func (scheduler *BaseScheduler) SetTaskStore(taskStore TaskStore) {
 			if err != nil {
 				log.Errorf("(Task %s) Not Found, Data may be lost.", taskID)
 			}
-			scheduler.getInLimitChan(int(tf.Input.Type)) <- true
-			go scheduler.handle(tf)
+			pool := scheduler.getInPool(int(tf.Input.Type))
+			pool.Push(func() {
+				scheduler.handle(tf)
+			})
 		}
 	}()
 	go func() {
 		for result := range scheduler.out {
-			scheduler.getOutLimitChan(int(result.Type)) <- true
-			go scheduler.onSuccess(result)
+			tmp := result
+			pool := scheduler.getOutPool(int(result.Type))
+			pool.Push(func() {
+				scheduler.onSuccess(tmp)
+			})
+		}
+	}()
+	go func() {
+		for {
+			scheduler.checkWait()
+			time.Sleep(10 * time.Second)
 		}
 	}()
 }
 
 func (scheduler *BaseScheduler) checkWait() {
+	// log.Debugf("%d %d %d", scheduler.count, len(scheduler.in), scheduler.waitChans.Len())
 	if scheduler.count == 0 && len(scheduler.in) == 0 {
 		scheduler.waitLock.Lock()
 		for i := 0; i < scheduler.waitChans.Len(); i++ {
@@ -166,9 +222,9 @@ func (scheduler *BaseScheduler) Publish(parent *task.TaskFuture, input task.Task
 var maxRetry = getMaxRetry()
 
 func getMaxRetry() int {
-	r, err := strconv.Atoi(utils.GetEnv("TASK_MAX_RETRY", "3"))
+	r, err := strconv.Atoi(utils.GetEnv("TASK_MAX_RETRY", "5"))
 	if err != nil {
-		return 3
+		return 5
 	}
 	return r
 }
@@ -202,9 +258,6 @@ func (scheduler *BaseScheduler) onFailed(tf *task.TaskFuture, err error) {
 }
 
 func (scheduler *BaseScheduler) onSuccess(output task.TaskResult) {
-	defer func() {
-		<-scheduler.getOutLimitChan(int(output.Type))
-	}()
 	tf, err := scheduler.taskStore.Get(output.ID)
 	if err != nil {
 		log.Errorf("(Task %s) Task not Found", output.ID)
@@ -232,9 +285,9 @@ func (scheduler *BaseScheduler) onSuccess(output task.TaskResult) {
 }
 
 func (scheduler *BaseScheduler) handle(tf *task.TaskFuture) {
-	defer func() {
-		<-scheduler.getInLimitChan(int(tf.Input.Type))
-	}()
+	// defer func() {
+	// 	<-scheduler.getInLimitChan(int(tf.Input.Type))
+	// }()
 	err := scheduler.taskStore.Set(tf.ID, tf)
 	if err != nil {
 		scheduler.onFailed(tf, err)
@@ -301,11 +354,18 @@ func (scheduler *BaseScheduler) PrependFailureHandler(t int, handler func(task.T
 }
 
 func (scheduler *BaseScheduler) Close() {
-	for _, v := range scheduler.inLimit {
-		close(v)
+	// NOTE: deprecated
+	// for _, v := range scheduler.inLimit {
+	// 	close(v)
+	// }
+	// for _, v := range scheduler.outLimit {
+	// 	close(v)
+	// }
+	for _, v := range scheduler.inPool {
+		v.Release()
 	}
-	for _, v := range scheduler.outLimit {
-		close(v)
+	for _, v := range scheduler.outPool {
+		v.Release()
 	}
 	close(scheduler.in)
 	close(scheduler.out)

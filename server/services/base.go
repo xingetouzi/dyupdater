@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
+	"sync"
 	"time"
 
 	"fxdayu.com/dyupdater/server/calculators"
@@ -28,6 +29,7 @@ type FactorServices struct {
 	sources     map[string]sources.FactorSource
 	calculators map[string]calculators.FactorCalculator
 	stores      map[string]stores.FactorStore
+	count       sync.Map
 	scheduler   schedulers.TaskScheduler
 	indexer     indexers.TradingDatetimeIndexer
 }
@@ -66,25 +68,61 @@ func (this *FactorServices) Check(factor models.Factor, dateRange models.DateRan
 	return tf
 }
 
+func (service *FactorServices) CheckWithLock(factor models.Factor, dateRange models.DateRange) *task.TaskFuture {
+	if val, ok := service.count.Load(factor.ID); ok {
+		count := val.(int)
+		if count > 0 {
+			return nil
+		}
+	}
+	stores := make([]string, 0)
+	for k, v := range service.stores {
+		if v.IsEnabled() {
+			stores = append(stores, k)
+		}
+	}
+	data := task.CheckTaskPayload{Stores: stores, Factor: factor, DateRange: dateRange}
+	t := task.TaskInput{Type: task.TaskTypeCheck, Payload: data}
+	tf := service.scheduler.Publish(nil, t)
+	if tf != nil {
+		service.count.Store(factor.ID, 1)
+	}
+	return tf
+}
+
 func (service *FactorServices) CheckAll(dateRange models.DateRange) []*task.TaskFuture {
 	tfs := make([]*task.TaskFuture, 0)
 	for _, source := range service.sources {
 		if source.IsEnabled() {
 			factors := source.Fetch()
-			for _, factor := range factors {
-				var tf *task.TaskFuture
-				for i := 0; i <= 3; i++ {
-					tf = service.Check(factor, dateRange)
-					if tf == nil {
-						time.Sleep(time.Duration(i) * 2 * time.Second)
-					} else {
-						break
-					}
+			ch := make(chan models.Factor, 10000)
+			count := len(factors)
+			go func() {
+				for _, factor := range factors {
+					ch <- factor
 				}
+			}()
+			for factor := range ch {
+				var tf *task.TaskFuture
+				tf = service.Check(factor, dateRange)
 				if tf != nil {
 					tfs = append(tfs, tf)
+					count--
+					if count == 0 {
+						break
+					}
+				} else {
+					select {
+					case ch <- factor:
+						continue
+					default:
+						go func() {
+							ch <- factor
+						}()
+					}
 				}
 			}
+			close(ch)
 		}
 	}
 	return tfs
