@@ -54,15 +54,15 @@ func (store *MongoStore) getFactorDateSet(factor models.Factor) (mapset.Set, err
 	conn := store.session.Clone()
 	defer conn.Close()
 	col := conn.DB(store.config.Db).C(factor.ID)
-	var factorDatetimes []factorDatetime
-	err := col.Find(bson.M{}).All(&factorDatetimes)
-	if err != nil {
-		return nil, err
-	}
+	iter := col.Find(nil).Select(bson.M{"datetime": true}).Batch(1000).Iter()
+	var value factorDatetime
 	dateSet := mapset.NewSet()
-	for _, value := range factorDatetimes {
+	for iter.Next(&value) {
 		date, _ := utils.Datetoi(value.Datetime)
 		dateSet.Add(date)
+	}
+	if err := iter.Close(); err != nil {
+		return nil, err
 	}
 	return dateSet, nil
 }
