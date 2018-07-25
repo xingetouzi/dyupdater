@@ -24,6 +24,7 @@ func getFactorsMap(factors []models.Factor) map[string]*models.Factor {
 var aaaContent = "\"Are you OK~!\""
 var ccccContent = "\"Rrrrrrrr U OK\""
 var dddContent = "\"I am fine\""
+var ddd2Content = "\"I am not fine\""
 var eeeeContent = "\"Thank you~\""
 
 func TestFileSource(t *testing.T) {
@@ -55,6 +56,7 @@ func TestFileSource(t *testing.T) {
 	checkFactor(factors, "bb", "", false)
 	checkFactor(factors, "cccc", ccccContent, true)
 	checkFactor(factors, "ddd", dddContent, true)
+	checkFactor(factors, "ddd-不同", ddd2Content, true)
 	checkFactor(factors, "eeee", eeeeContent, true)
 	config.Set("regex", "^\\w{0,3}$")
 	source = &FileSystemSource{}
@@ -65,5 +67,6 @@ func TestFileSource(t *testing.T) {
 	checkFactor(factors, "bb", "", false)
 	checkFactor(factors, "cccc", "", false)
 	checkFactor(factors, "ddd", dddContent, true)
+	checkFactor(factors, "ddd-不同", "", false)
 	checkFactor(factors, "eeee", "", false)
 }

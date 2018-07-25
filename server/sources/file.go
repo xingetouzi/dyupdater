@@ -87,7 +87,7 @@ func (source *FileSystemSource) Fetch() []models.Factor {
 		}
 		fileContent = utils.StripBOM(fileContent)
 		factor.Formula = string(fileContent)
-		factor.ID = strings.TrimRight(info.Name(), ".py")
+		factor.ID = factorName
 		factors = append(factors, factor)
 		return ret
 	}

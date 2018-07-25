@@ -97,11 +97,11 @@ func (service *FactorServices) CheckAll(dateRange models.DateRange) []*task.Task
 			factors := source.Fetch()
 			ch := make(chan models.Factor, 10000)
 			count := len(factors)
-			go func() {
+			go func(factors []models.Factor) {
 				for _, factor := range factors {
 					ch <- factor
 				}
-			}()
+			}(factors)
 			for factor := range ch {
 				var tf *task.TaskFuture
 				tf = service.Check(factor, dateRange)
@@ -116,9 +116,9 @@ func (service *FactorServices) CheckAll(dateRange models.DateRange) []*task.Task
 					case ch <- factor:
 						continue
 					default:
-						go func() {
+						go func(factor models.Factor) {
 							ch <- factor
-						}()
+						}(factor)
 					}
 				}
 			}
@@ -257,6 +257,7 @@ func (this *FactorServices) handleCheck(tf *task.TaskFuture) error {
 		if err != nil {
 			log.Warningf("(Task %s) { %s } [ %d , %d ] Store[%s] check failed: %s.", tf.ID, data.GetFactorID(),
 				data.GetStartTime(), data.GetEndTime(), name, err.Error())
+			return err
 		}
 		if dates != nil {
 			newSet := mapset.NewSet()
@@ -330,7 +331,7 @@ func (service *FactorServices) handleUpdate(tf *task.TaskFuture) error {
 	output := new(task.TaskResult)
 	result := task.UpdateTaskResult{Count: count}
 	output.ID = tf.ID
-	output.Type = task.TaskTypeCheck
+	output.Type = task.TaskTypeUpdate
 	output.Result = result
 	out := service.scheduler.GetOutputChan()
 	out <- *output

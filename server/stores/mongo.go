@@ -50,45 +50,59 @@ func (store *MongoStore) Init(config *viper.Viper) {
 	}
 }
 
-func (store *MongoStore) getFactorDateSet(factor models.Factor) mapset.Set {
+func (store *MongoStore) getFactorDateSet(factor models.Factor) (mapset.Set, error) {
 	conn := store.session.Clone()
 	defer conn.Close()
 	col := conn.DB(store.config.Db).C(factor.ID)
 	var factorDatetimes []factorDatetime
-	col.Find(bson.M{}).All(&factorDatetimes)
+	err := col.Find(bson.M{}).All(&factorDatetimes)
+	if err != nil {
+		return nil, err
+	}
 	dateSet := mapset.NewSet()
 	for _, value := range factorDatetimes {
 		date, _ := utils.Datetoi(value.Datetime)
 		dateSet.Add(date)
 	}
-	return dateSet
+	return dateSet, nil
 }
 
 // Update factor data of given factor and factor values in MongoStore.
 func (store *MongoStore) Update(factor models.Factor, factorValue models.FactorValue, replace bool) (int, error) {
-	var err error
-	defer func() {
-		if e := recover(); e != nil {
-			err = e.(error)
-			log.Error(err.Error())
-		}
-	}()
 	conn := store.session.Clone()
 	defer conn.Close()
 	col := conn.DB(store.config.Db).C(factor.ID)
-	col.EnsureIndexKey("-datetime")
+	err := col.EnsureIndexKey("-datetime")
+	if err != nil {
+		return 0, err
+	}
 	var dateSet mapset.Set
 	length := len(factorValue.Datetime)
 	if !replace {
-		dateSet = store.getFactorDateSet(factor)
+		// getFactorDateSet sometimes lead to timeout error, add retry.
+		for i := 0; i < 3; i++ {
+			dateSet, _ = store.getFactorDateSet(factor)
+			if dateSet != nil {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}
+	doReplace := replace
+	if dateSet == nil {
+		doReplace = true
 	}
 	count := 0
 	for i, dateInt := range factorValue.Datetime {
-		if !replace && dateSet.Contains(dateInt) {
+		if !doReplace && dateSet.Contains(dateInt) {
 			continue
 		}
 		dct := make(map[string]interface{}, length)
-		date, _ := utils.ItoDate(dateInt)
+		date, err := utils.ItoDate(dateInt)
+		// this error rarely happen
+		if err != nil {
+			continue
+		}
 		dct["datetime"] = date
 		for key := range factorValue.Values {
 			value := factorValue.Values[key][i]
@@ -100,7 +114,16 @@ func (store *MongoStore) Update(factor models.Factor, factorValue models.FactorV
 				dct[mgoKey] = value
 			}
 		}
-		col.Upsert(bson.M{"datetime": dct["datetime"]}, bson.M{"$set": dct})
+		for i := 0; i < 3; i++ {
+			_, err = col.Upsert(bson.M{"datetime": dct["datetime"]}, bson.M{"$set": dct})
+			if err == nil {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		if err != nil {
+			return count, err
+		}
 		count++
 	}
 	return count, err
@@ -113,7 +136,11 @@ func (store *MongoStore) Check(factor models.Factor, index []int) ([]int, error)
 		indexSet.Add(interface{}(v))
 	}
 	var dateToUpdate []int
-	for _, v := range indexSet.Difference(store.getFactorDateSet(factor)).ToSlice() {
+	dates, err := store.getFactorDateSet(factor)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range indexSet.Difference(dates).ToSlice() {
 		dateToUpdate = append(dateToUpdate, v.(int))
 	}
 	sort.Ints(dateToUpdate)
@@ -122,5 +149,5 @@ func (store *MongoStore) Check(factor models.Factor, index []int) ([]int, error)
 
 // Close the MongoStore, will close all mongodb connections.
 func (store *MongoStore) Close() {
-	store.session.Clone()
+	store.session.Close()
 }

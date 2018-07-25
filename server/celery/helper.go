@@ -324,17 +324,43 @@ func (helper *CeleryHelper) fetchTask(task string) (*CeleryTaskResponse, error) 
 	respData := new(CeleryTaskResponse)
 	respData.CeleryID = res.ID
 	respData.State = res.Status
-	if res.Traceback != nil {
-		exec := new(celeryExec)
-		b, _ := json.Marshal(res.Result)
-		err := json.Unmarshal(b, exec)
-		if err != nil {
-			log.Error(err.Error())
+	if respData.State == "FAILURE" {
+		if res.Traceback != nil {
+			tmp, ok := res.Traceback.(string)
+			if ok {
+				respData.Error = tmp
+			} else {
+				log.Errorf("unvalid celery task traceback data: %s", res.Traceback)
+				respData.Error = "unvalid celery task traceback data"
+			}
 		}
-		respData.Error = fmt.Sprintf("%s %s : %s", res.Traceback.(string), exec.Type, exec.Message)
+		var exec *celeryExec
+		if res.Result != nil {
+			exec = new(celeryExec)
+			b, _ := json.Marshal(res.Result)
+			err := json.Unmarshal(b, exec)
+			if err != nil {
+				log.Error(err.Error())
+				exec = nil
+			}
+		}
+		if respData.Error != "" && exec != nil {
+			respData.Error = fmt.Sprintf("%s %s : %s", respData.Error, exec.Type, exec.Message)
+		} else if respData.Error == "" && exec != nil {
+			respData.Error = fmt.Sprintf("%s : %s", exec.Type, exec.Message)
+		} else {
+			respData.Error = "no valid celery task failure infomation"
+		}
 	} else if res.Result != nil {
 		// TODO fix Result interface
-		respData.Result = res.Result.(string)
+		tmp, ok := res.Result.(string)
+		if ok {
+			respData.Result = tmp
+		} else {
+			log.Errorf("unvalid celery result: %s", res.Result)
+			respData.Error = "unvalid celery result, must be string"
+			respData.State = "FAILURE"
+		}
 	}
 	return respData, nil
 }
