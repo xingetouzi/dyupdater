@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -101,7 +102,7 @@ func (scheduler *BaseScheduler) getInPool(taskType int) *ants.Pool {
 	pool, ok := scheduler.inPool[taskType]
 	if !ok {
 		var err error
-		pool, err = ants.NewPool(runtime.NumCPU() * 4)
+		pool, err = ants.NewPool(runtime.NumCPU())
 		if err != nil {
 			panic(err)
 		}
@@ -114,7 +115,7 @@ func (scheduler *BaseScheduler) getOutPool(taskType int) *ants.Pool {
 	pool, ok := scheduler.outPool[taskType]
 	if !ok {
 		var err error
-		pool, err = ants.NewPool(runtime.NumCPU() * 4)
+		pool, err = ants.NewPool(runtime.NumCPU())
 		if err != nil {
 			panic(err)
 		}
@@ -222,11 +223,36 @@ func (scheduler *BaseScheduler) Publish(parent *task.TaskFuture, input task.Task
 var maxRetry = getMaxRetry()
 
 func getMaxRetry() int {
-	r, err := strconv.Atoi(utils.GetEnv("TASK_MAX_RETRY", "5"))
+	defaultMaxRetry := 3
+	r, err := strconv.Atoi(utils.GetEnv("TASK_MAX_RETRY", strconv.Itoa(defaultMaxRetry)))
 	if err != nil {
-		return 5
+		return defaultMaxRetry
 	}
 	return r
+}
+
+func getRetryDelay() uint {
+	defaultRetryDelay := 10
+	r, err := strconv.Atoi(utils.GetEnv("TASK_RETRY_DELAY", strconv.Itoa(defaultRetryDelay)))
+	if err != nil || r <= 0 {
+		return uint(defaultRetryDelay)
+	}
+	return uint(r)
+}
+
+func getRetryBackoff() bool {
+	r := utils.GetEnv("TASK_RETRY_DELAY", "")
+	return strings.Compare(r, "") != 0 || strings.Compare(r, "false") != 0
+}
+
+func getRetryInterval(times int) uint {
+	delay := getRetryDelay()
+	backoff := getRetryBackoff()
+	if backoff {
+		return delay * (1 << (uint(times) - 1))
+	} else {
+		return delay * uint(times)
+	}
 }
 
 func (scheduler *BaseScheduler) onFailed(tf *task.TaskFuture, err error) {
@@ -237,7 +263,7 @@ func (scheduler *BaseScheduler) onFailed(tf *task.TaskFuture, err error) {
 		}
 	}
 	log.Errorf("(Task %s) Failed due to: %s", tf.ID, err)
-	wait := time.Duration((tf.Retry + 1) * 5)
+	wait := time.Duration(getRetryInterval(tf.Retry + 1))
 	if tf.Retry < maxRetry {
 		log.Infof("(Task %s) Retry for %d time after %d second", tf.ID, tf.Retry+1, wait)
 		time.Sleep(wait * time.Second)

@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/garyburd/redigo/redis"
+
 	"fxdayu.com/dyupdater/server/utils"
 	"github.com/deckarep/golang-set"
 	"github.com/spf13/viper"
@@ -54,17 +56,17 @@ type celeryHelperConfig struct {
 }
 
 type CeleryHelper struct {
-	config     *celeryHelperConfig
-	running    bool
-	store      taskMapStore
-	backend    *CustomRedisCeleryBackend
-	broker     *AMQPCeleryBroker
-	clients    []*FlowerWsClient
-	eventLimit chan bool
-	event      chan *FlowerEvent
-	eventB     chan string
-	out        map[string]chan CeleryTaskResult
-	term       chan bool
+	config       *celeryHelperConfig
+	running      bool
+	store        taskMapStore
+	backend      *CustomRedisCeleryBackend
+	broker       *AMQPCeleryBroker
+	clients      []*FlowerWsClient
+	chEvent      chan interface{}
+	chEventLimit chan bool
+	chQueryAll   chan bool
+	out          map[string]chan CeleryTaskResult
+	term         chan bool
 }
 
 // CeleryService Celery是python的分布式任务队列模块
@@ -252,14 +254,14 @@ func (helper *CeleryHelper) Run() {
 		}
 	}()
 	helper.clients = make([]*FlowerWsClient, 2)
-	helper.eventLimit = make(chan bool, runtime.NumCPU())
-	helper.event = make(chan *FlowerEvent, 100000)
+	helper.chEventLimit = make(chan bool, runtime.NumCPU())
+	helper.chEvent = make(chan interface{}, 100000)
+	helper.chQueryAll = make(chan bool)
 	helper.out = make(map[string]chan CeleryTaskResult)
 	helper.term = make(chan bool)
 	log.Infof("Connect to flower host: %s\n", helper.config.Host)
 	go func() {
 		for helper.running {
-			log.Info("Query status for all celery task.")
 			helper.queryAll()
 			select {
 			case <-helper.term:
@@ -267,6 +269,11 @@ func (helper *CeleryHelper) Run() {
 			case <-time.After(600 * time.Second):
 				continue
 			}
+		}
+	}()
+	go func() {
+		for range helper.chQueryAll {
+			helper.doQueryAll()
 		}
 	}()
 	// listen to the celery result to be set.
@@ -366,17 +373,25 @@ func (helper *CeleryHelper) fetchTask(task string) (*CeleryTaskResponse, error) 
 }
 
 func (helper *CeleryHelper) queryAll() {
+	select {
+	case helper.chQueryAll <- true:
+	default:
+	}
+}
+
+func (helper *CeleryHelper) doQueryAll() {
+	log.Info("Query status for all celery task.")
 	for _, tid := range helper.store.Iter() {
 		if !helper.running {
 			break
 		}
-		helper.eventLimit <- true
+		helper.chEventLimit <- true
 		go func() {
 			r, err := helper.fetchTask(tid)
 			if err == nil {
 				helper.putResult(r)
 			}
-			<-helper.eventLimit
+			<-helper.chEventLimit
 		}()
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -392,9 +407,8 @@ func (helper *CeleryHelper) GetOutput(routerkey string) chan CeleryTaskResult {
 }
 
 func (helper *CeleryHelper) subscribe() {
-	event := make(chan string, 100000)
 	for {
-		err := helper.backend.Subscribe(event)
+		err := helper.backend.Subscribe(helper.chEvent)
 		if err == nil {
 			break
 		}
@@ -402,59 +416,64 @@ func (helper *CeleryHelper) subscribe() {
 		time.Sleep(10 * time.Second)
 	}
 	go func() {
-		for taskID := range event {
-			log.Debugf("Receive celery Event: %s", taskID)
-			if !helper.store.IsSet(taskID) {
-				log.Debugf("Skip unrelated celery Event: %s", taskID)
-				continue
-			}
-			helper.eventLimit <- true
-			go func(id string) {
-				log.Debugf("Query celery task: %s", id)
-				for r, err := helper.fetchTask(id); ; {
-					if err == nil {
-						helper.putResult(r)
-						break
-					}
-					time.Sleep(100 * time.Millisecond)
+		for recv := range helper.chEvent {
+			switch v := recv.(type) {
+			case string:
+				log.Debugf("Receive celery Event: %s", v)
+				if !helper.store.IsSet(v) {
+					log.Debugf("Skip unrelated celery Event: %s", v)
+					continue
 				}
-				<-helper.eventLimit
-			}(taskID)
+				helper.chEventLimit <- true
+				go func(id string) {
+					log.Debugf("Query celery task: %s", id)
+					for r, err := helper.fetchTask(id); ; {
+						if err == nil {
+							helper.putResult(r)
+							break
+						}
+						time.Sleep(100 * time.Millisecond)
+					}
+					<-helper.chEventLimit
+				}(v)
+			case redis.Subscription:
+				helper.queryAll()
+			}
 		}
 	}()
 }
 
-//NOTE deprecate
-func (helper *CeleryHelper) listen() {
-	for e := range helper.event {
-		log.Debugf("Receive celery Event: %s", e.UUID)
-		if !helper.store.IsSet(e.UUID) {
-			log.Debugf("Skip unrelated celery Event: %s", e.UUID)
-			continue
-		}
-		helper.eventLimit <- true
-		go func(id string) {
-			log.Debugf("Query celery task: %s", id)
-			for r, err := helper.fetchTask(id); ; {
-				if err == nil {
-					helper.putResult(r)
-					break
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
-			<-helper.eventLimit
-		}(e.UUID)
-	}
-}
+// //NOTE deprecate
+// func (helper *CeleryHelper) listen() {
+// 	for e := range helper.event {
+// 		log.Debugf("Receive celery Event: %s", e.UUID)
+// 		if !helper.store.IsSet(e.UUID) {
+// 			log.Debugf("Skip unrelated celery Event: %s", e.UUID)
+// 			continue
+// 		}
+// 		helper.eventLimit <- true
+// 		go func(id string) {
+// 			log.Debugf("Query celery task: %s", id)
+// 			for r, err := helper.fetchTask(id); ; {
+// 				if err == nil {
+// 					helper.putResult(r)
+// 					break
+// 				}
+// 				time.Sleep(100 * time.Millisecond)
+// 			}
+// 			<-helper.eventLimit
+// 		}(e.UUID)
+// 	}
+// }
 
-//NOTE deprecate
-func (helper *CeleryHelper) openWs() {
-	host := helper.config.Host
-	successURL := url.URL{Scheme: "ws", Host: host, Path: "/api/task/events/task-succeeded/"}
-	helper.clients = append(helper.clients, OpenWs(helper.event, successURL.String()))
-	failedURL := url.URL{Scheme: "ws", Host: host, Path: "/api/task/events/task-failed/"}
-	helper.clients = append(helper.clients, OpenWs(helper.event, failedURL.String()))
-}
+// //NOTE deprecate
+// func (helper *CeleryHelper) openWs() {
+// 	host := helper.config.Host
+// 	successURL := url.URL{Scheme: "ws", Host: host, Path: "/api/task/events/task-succeeded/"}
+// 	helper.clients = append(helper.clients, OpenWs(helper.event, successURL.String()))
+// 	failedURL := url.URL{Scheme: "ws", Host: host, Path: "/api/task/events/task-failed/"}
+// 	helper.clients = append(helper.clients, OpenWs(helper.event, failedURL.String()))
+// }
 
 func (helper *CeleryHelper) GetQueue(task string, routerKey string) *CeleryQueue {
 	q := &CeleryQueue{}
@@ -470,8 +489,8 @@ func (helper *CeleryHelper) Close() {
 	for _, client := range helper.clients {
 		client.Close()
 	}
-	close(helper.event)
-	close(helper.eventLimit)
+	close(helper.chEvent)
+	close(helper.chEventLimit)
 	close(helper.term)
 	for _, v := range helper.out {
 		close(v)

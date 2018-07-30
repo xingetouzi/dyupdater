@@ -15,8 +15,8 @@ import (
 
 type CustomRedisCeleryBackend struct {
 	*gocelery.RedisCeleryBackend
-	subscriber []chan string
-	db         string
+	subscribers []chan interface{}
+	db          string
 }
 
 func NewRedisPoolWithOptions(host, pass string, options ...redis.DialOption) *redis.Pool {
@@ -76,7 +76,7 @@ func NewCustomRedisCeleryBackend(s string) *CustomRedisCeleryBackend {
 	log.Infof("Connect to redis celery backend: %s/%s", host, path)
 	return &CustomRedisCeleryBackend{
 		RedisCeleryBackend: NewRedisCeleryBackendWithOptions(host, pass, db),
-		subscriber:         make([]chan string, 0),
+		subscribers:        make([]chan interface{}, 0),
 		db:                 path,
 	}
 }
@@ -122,6 +122,17 @@ func (crb *CustomRedisCeleryBackend) DeleteResult(taskID string) error {
 	return err
 }
 
+func (crb *CustomRedisCeleryBackend) sendToSubscribers(v interface{}) {
+	for _, ch := range crb.subscribers {
+		select {
+		case ch <- v:
+			continue
+		default:
+			continue
+		}
+	}
+}
+
 func (crb *CustomRedisCeleryBackend) handleSubscribe(psc *redis.PubSubConn) error {
 	for {
 		switch v := psc.Receive().(type) {
@@ -129,17 +140,11 @@ func (crb *CustomRedisCeleryBackend) handleSubscribe(psc *redis.PubSubConn) erro
 			key := bytes.NewBuffer(v.Data).String()
 			if strings.HasPrefix(key, "celery-task-meta-") {
 				taskID := strings.TrimPrefix(key, "celery-task-meta-")
-				for _, ch := range crb.subscriber {
-					select {
-					case ch <- taskID:
-						continue
-					default:
-						continue
-					}
-				}
+				crb.sendToSubscribers(taskID)
 			}
 		case redis.Subscription:
 			log.Debugf("Subscribe success, channel: %s, kind: %s, count: %d.", v.Channel, v.Kind, v.Count)
+			crb.sendToSubscribers(v)
 		case error:
 			log.Error(v.Error())
 			return v
@@ -199,23 +204,22 @@ func (crb *CustomRedisCeleryBackend) startSubscribe() error {
 			err := psc.Subscribe(channelName)
 			if err != nil {
 				log.Error(err.Error())
-				failture++
-				continue
+			} else {
+				failture = 0
+				crb.handleSubscribe(psc)
 			}
-			failture = 0
-			crb.handleSubscribe(psc)
 			failture++
 		}
 	}()
 	return nil
 }
 
-func (crb *CustomRedisCeleryBackend) Subscribe(ch chan string) error {
-	if len(crb.subscriber) == 0 {
+func (crb *CustomRedisCeleryBackend) Subscribe(ch chan interface{}) error {
+	if len(crb.subscribers) == 0 {
 		if err := crb.startSubscribe(); err != nil {
 			return err
 		}
 	}
-	crb.subscriber = append(crb.subscriber, ch)
+	crb.subscribers = append(crb.subscribers, ch)
 	return nil
 }

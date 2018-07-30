@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -147,7 +146,15 @@ func (service *FactorServices) onCheckSuccess(tf task.TaskFuture, r task.TaskRes
 		return errors.New("Unvalid check result")
 	}
 	data := tf.Input.Payload.(task.CheckTaskPayload)
-	log.Infof("(Task %s) {%s} [ %d , %d ] Check finish.", r.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End)
+	var first, last int
+	l := len(result.Datetimes)
+	if l > 0 {
+		first = result.Datetimes[0]
+		last = result.Datetimes[l-1]
+		log.Infof("(Task %s) {%s} [ %d , %d ] Check finish, missing data in (%d ... %d).", r.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End, first, last)
+	} else {
+		log.Infof("(Task %s) {%s} [ %d , %d ] Check finish, no missing data found.", r.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End)
+	}
 	maxCalDuration := utils.GetGlobalConfig().GetMaxCalDuration()
 	minCalDuration := utils.GetGlobalConfig().GetMinCalDuration()
 	if len(result.Datetimes) > 0 {
@@ -372,8 +379,6 @@ func NewFactorServices(s schedulers.TaskScheduler) *FactorServices {
 	s.AppendFailureHandler(int(task.TaskTypeCal), fs.onCalFailed)
 	s.AppendFailureHandler(int(task.TaskTypeCheck), fs.onCheckFailed)
 	s.AppendFailureHandler(int(task.TaskTypeUpdate), fs.onUpdateFailed)
-	s.SetOutLimit(int(task.TaskTypeCal), runtime.NumCPU())
-	s.SetInLimit(int(task.TaskTypeCal), runtime.NumCPU()*2)
 	return fs
 }
 
