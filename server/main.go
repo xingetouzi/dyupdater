@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"fxdayu.com/dyupdater/server/task"
-
 	"fxdayu.com/dyupdater/server/models"
 	"fxdayu.com/dyupdater/server/server"
 	"fxdayu.com/dyupdater/server/services"
+	"fxdayu.com/dyupdater/server/task"
 	"fxdayu.com/dyupdater/server/utils"
 	flag "github.com/spf13/pflag"
 )
@@ -58,21 +57,32 @@ func main() {
 				if err != nil {
 					panic(err)
 				}
+				addrs := []string{fmt.Sprintf("%s:%d", host, port)}
 				fs := services.NewFactorServiceFromConfig(configPath)
 				archive := utils.GetTaskArchive()
 				scheduler := fs.GetScheduler()
 				archiveHandler := func(tf *task.TaskFuture) error {
-					archive.Append(tf)
+					tr := utils.NewTaskArchiveRecord(tf)
+					archive.Set(tr)
 					return nil
 				}
-				scheduler.PrependHandler(int(task.TaskTypeCheck), archiveHandler)
-				scheduler.PrependHandler(int(task.TaskTypeCal), archiveHandler)
-				scheduler.PrependHandler(int(task.TaskTypeUpdate), archiveHandler)
-				cs := services.NewCronService(fs)
-				if initCheck {
-					go fs.CheckAll(models.DateRange{Start: utils.GetGlobalConfig().GetCalStartDate(), End: 0})
+				taskTypes := []int{int(task.TaskTypeCheck), int(task.TaskTypeCal), int(task.TaskTypeUpdate)}
+				for _, t := range taskTypes {
+					scheduler.PrependHandler(t, archiveHandler)
+					scheduler.AppendPostSuccessHandler(t, func(tf task.TaskFuture, r task.TaskResult) {
+						archiveHandler(&tf)
+					})
+					scheduler.AppendAbortedHandler(t, func(tf task.TaskFuture) {
+						archiveHandler(&tf)
+					})
 				}
-				addrs := []string{fmt.Sprintf("%s:%d", host, port)}
+				cs := services.NewCronService(fs)
+				if startTime == 0 {
+					startTime = utils.GetGlobalConfig().GetCalStartDate()
+				}
+				if initCheck {
+					go fs.CheckAll(models.DateRange{Start: startTime, End: endTime})
+				}
 				cs.Run()
 				server.Serve(debug, accessLogFile, fs, addrs...)
 			}
@@ -81,9 +91,6 @@ func main() {
 			if err := f2.Parse(os.Args[2:]); err == nil {
 				configLog()
 				fs := services.NewFactorServiceFromConfig(configPath)
-				if startTime == 0 {
-					startTime = utils.GetGlobalConfig().GetCalStartDate()
-				}
 				fs.CheckAll(models.DateRange{Start: startTime, End: endTime})
 				fs.Wait(0)
 			}

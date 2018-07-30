@@ -69,41 +69,31 @@ func (cs *CronService) Init(config *viper.Viper) {
 }
 
 func (cs *CronService) worker() {
-	for cs.running {
-		select {
-		case ct := <-cs.queue:
-			{
-				now := time.Now()
-				dr := models.DateRange{}
-				dr.Start = ct.Start
-				dr.End = ct.End
-				var err error
-				if ct.Start == 0 && ct.StartDelta != 0 {
-					dr.Start, err = utils.Datetoi(now.Add(-time.Duration(ct.StartDelta) * time.Second))
-					if err != nil {
-						log.Error(err.Error())
-						continue
-					}
-				}
-				if ct.Start == 0 && ct.StartDelta == 0 {
-					dr.Start = utils.GetGlobalConfig().GetCalStartDate()
-				}
-				if ct.End == 0 && ct.EndDelta != 0 {
-					dr.End, err = utils.Datetoi(now.Add(-time.Duration(ct.EndDelta) * time.Second))
-					if err != nil {
-						log.Error(err.Error())
-						continue
-					}
-				}
-				cs.fs.CheckAll(dr)
-				cs.fs.Wait(4800)
-			}
-		case <-time.After(10 * time.Second):
-			{
+	for ct := range cs.queue {
+		now := time.Now()
+		dr := models.DateRange{}
+		dr.Start = ct.Start
+		dr.End = ct.End
+		var err error
+		if ct.Start == 0 && ct.StartDelta != 0 {
+			dr.Start, err = utils.Datetoi(now.Add(-time.Duration(ct.StartDelta) * time.Second))
+			if err != nil {
+				log.Error(err.Error())
 				continue
 			}
-		default:
 		}
+		if ct.Start == 0 && ct.StartDelta == 0 {
+			dr.Start = utils.GetGlobalConfig().GetCalStartDate()
+		}
+		if ct.End == 0 && ct.EndDelta != 0 {
+			dr.End, err = utils.Datetoi(now.Add(-time.Duration(ct.EndDelta) * time.Second))
+			if err != nil {
+				log.Error(err.Error())
+				continue
+			}
+		}
+		cs.fs.CheckAll(dr)
+		cs.fs.Wait(4800)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"fxdayu.com/dyupdater/server/common"
 	"fxdayu.com/dyupdater/server/task"
 	"fxdayu.com/dyupdater/server/utils"
+	"github.com/Jeffail/tunny"
 	"github.com/panjf2000/ants"
 	"github.com/spf13/viper"
 )
@@ -34,42 +35,55 @@ type TaskScheduler interface {
 	GetTasks() ([]*task.TaskFuture, error)
 	AppendHandler(t int, handler func(*task.TaskFuture) error)
 	AppendSuccessHandler(t int, handler func(task.TaskFuture, task.TaskResult) error)
+	AppendPostSuccessHandler(t int, handler func(task.TaskFuture, task.TaskResult))
 	AppendFailureHandler(t int, handler func(task.TaskFuture, error))
+	AppendAbortedHandler(t int, handler func(task.TaskFuture))
 	PrependHandler(t int, handler func(*task.TaskFuture) error)
 	PrependSuccessHandler(t int, handler func(task.TaskFuture, task.TaskResult) error)
+	PrependPostSuccessHandler(t int, handler func(task.TaskFuture, task.TaskResult))
 	PrependFailureHandler(t int, handler func(task.TaskFuture, error))
+	PrependAbortedHandler(t int, handler func(task.TaskFuture))
 	GetOutputChan() chan task.TaskResult
 	Wait(chan bool)
 }
 
 type BaseScheduler struct {
-	taskStore       TaskStore
-	handlers        map[int][]func(*task.TaskFuture) error
-	successHandlers map[int][]func(task.TaskFuture, task.TaskResult) error
-	failedHandlers  map[int][]func(task.TaskFuture, error)
-	in              chan string
-	out             chan task.TaskResult
+	taskStore           TaskStore
+	handlers            map[int][]func(*task.TaskFuture) error
+	successHandlers     map[int][]func(task.TaskFuture, task.TaskResult) error
+	failedHandlers      map[int][]func(task.TaskFuture, error)
+	postSuccessHandlers map[int][]func(task.TaskFuture, task.TaskResult)
+	abortedHandlers     map[int][]func(task.TaskFuture)
+	in                  chan string
+	out                 chan task.TaskResult
+	subIn               map[int]chan string
+	subOut              map[int]chan task.TaskResult
 	// NOTE: deprecated
 	// inLimit         map[int]chan bool
 	// outLimit        map[int]chan bool
-	inPool    map[int]*ants.Pool
-	outPool   map[int]*ants.Pool
+	inPool    map[int]*tunny.Pool
+	outPool   map[int]*tunny.Pool
 	count     int
 	waitChans *list.List
 	waitLock  *sync.Mutex
 }
 
 func (scheduler *BaseScheduler) Init(config *viper.Viper) {
-	scheduler.handlers = make(map[int][]func(*task.TaskFuture) error, 0)
-	scheduler.successHandlers = make(map[int][]func(task.TaskFuture, task.TaskResult) error, 0)
-	scheduler.failedHandlers = make(map[int][]func(task.TaskFuture, error), 0)
+	scheduler.handlers = make(map[int][]func(*task.TaskFuture) error)
+	scheduler.successHandlers = make(map[int][]func(task.TaskFuture, task.TaskResult) error)
+	scheduler.postSuccessHandlers = make(map[int][]func(task.TaskFuture, task.TaskResult))
+	scheduler.failedHandlers = make(map[int][]func(task.TaskFuture, error))
+	scheduler.abortedHandlers = make(map[int][]func(task.TaskFuture))
+
 	// NOTE: deprecated
 	// scheduler.inLimit = make(map[int]chan bool)
 	// scheduler.outLimit = make(map[int]chan bool)
 	scheduler.in = make(chan string, 1000000)
 	scheduler.out = make(chan task.TaskResult, 1000000)
-	scheduler.inPool = make(map[int]*ants.Pool)
-	scheduler.outPool = make(map[int]*ants.Pool)
+	scheduler.subIn = make(map[int]chan string)
+	scheduler.subOut = make(map[int]chan task.TaskResult)
+	scheduler.inPool = make(map[int]*tunny.Pool)
+	scheduler.outPool = make(map[int]*tunny.Pool)
 	scheduler.waitLock = &sync.Mutex{}
 	scheduler.waitChans = list.New()
 }
@@ -78,10 +92,26 @@ func (scheduler *BaseScheduler) GetOutputChan() chan task.TaskResult {
 	return scheduler.out
 }
 
+func (scheduler *BaseScheduler) newInPool(limit int) (*tunny.Pool, error) {
+	pool := tunny.NewFunc(limit, func(v interface{}) interface{} {
+		scheduler.handle(v.(*task.TaskFuture))
+		return nil
+	})
+	return pool, nil
+}
+
+func (scheduler *BaseScheduler) newOutPool(limit int) (*tunny.Pool, error) {
+	pool := tunny.NewFunc(limit, func(v interface{}) interface{} {
+		scheduler.onSuccess(v.(task.TaskResult))
+		return nil
+	})
+	return pool, nil
+}
+
 func (scheduler *BaseScheduler) SetInLimit(t int, limit int) {
 	// NOTE: deprecated
 	// scheduler.inLimit[t] = make(chan bool, limit)
-	pool, err := ants.NewPool(limit)
+	pool, err := scheduler.newInPool(limit)
 	if err != nil {
 		panic(err)
 	}
@@ -91,18 +121,18 @@ func (scheduler *BaseScheduler) SetInLimit(t int, limit int) {
 func (scheduler *BaseScheduler) SetOutLimit(t int, limit int) {
 	// NOTE: deprecated
 	// scheduler.outLimit[t] = make(chan bool, limit)
-	pool, err := ants.NewPool(limit)
+	pool, err := scheduler.newOutPool(limit)
 	if err != nil {
 		panic(err)
 	}
 	scheduler.outPool[t] = pool
 }
 
-func (scheduler *BaseScheduler) getInPool(taskType int) *ants.Pool {
+func (scheduler *BaseScheduler) getInPool(taskType int) *tunny.Pool {
 	pool, ok := scheduler.inPool[taskType]
 	if !ok {
 		var err error
-		pool, err = ants.NewPool(runtime.NumCPU())
+		pool, err = scheduler.newInPool(runtime.NumCPU())
 		if err != nil {
 			panic(err)
 		}
@@ -111,11 +141,11 @@ func (scheduler *BaseScheduler) getInPool(taskType int) *ants.Pool {
 	return pool
 }
 
-func (scheduler *BaseScheduler) getOutPool(taskType int) *ants.Pool {
+func (scheduler *BaseScheduler) getOutPool(taskType int) *tunny.Pool {
 	pool, ok := scheduler.outPool[taskType]
 	if !ok {
 		var err error
-		pool, err = ants.NewPool(runtime.NumCPU())
+		pool, err = scheduler.newOutPool(runtime.NumCPU())
 		if err != nil {
 			panic(err)
 		}
@@ -153,17 +183,17 @@ func (scheduler *BaseScheduler) SetTaskStore(taskStore TaskStore) {
 				log.Errorf("(Task %s) Not Found, Data may be lost.", taskID)
 			}
 			pool := scheduler.getInPool(int(tf.Input.Type))
-			pool.Push(func() {
-				scheduler.handle(tf)
+			ants.Push(func() {
+				pool.Process(tf)
 			})
 		}
 	}()
 	go func() {
 		for result := range scheduler.out {
-			tmp := result
+			v := result
 			pool := scheduler.getOutPool(int(result.Type))
-			pool.Push(func() {
-				scheduler.onSuccess(tmp)
+			ants.Push(func() {
+				pool.Process(v)
 			})
 		}
 	}()
@@ -280,6 +310,12 @@ func (scheduler *BaseScheduler) onFailed(tf *task.TaskFuture, err error) {
 		tf.Error = err.Error()
 		scheduler.count--
 		scheduler.checkWait()
+		handlers, ok := scheduler.abortedHandlers[int(tf.Input.Type)]
+		if ok {
+			for _, handler := range handlers {
+				handler(*tf)
+			}
+		}
 	}
 }
 
@@ -308,6 +344,12 @@ func (scheduler *BaseScheduler) onSuccess(output task.TaskResult) {
 	scheduler.taskStore.Remove(output.ID)
 	scheduler.count--
 	scheduler.checkWait()
+	postHandlers, ok := scheduler.postSuccessHandlers[int(tf.Input.Type)]
+	if ok {
+		for _, handler := range postHandlers {
+			handler(*tf, output)
+		}
+	}
 }
 
 func (scheduler *BaseScheduler) handle(tf *task.TaskFuture) {
@@ -379,6 +421,38 @@ func (scheduler *BaseScheduler) PrependFailureHandler(t int, handler func(task.T
 	scheduler.failedHandlers[t] = append([]func(task.TaskFuture, error){handler}, handlers...)
 }
 
+func (scheduler *BaseScheduler) AppendPostSuccessHandler(t int, handler func(task.TaskFuture, task.TaskResult)) {
+	handlers, ok := scheduler.postSuccessHandlers[t]
+	if !ok {
+		handlers = make([]func(task.TaskFuture, task.TaskResult), 0)
+	}
+	scheduler.postSuccessHandlers[t] = append(handlers, handler)
+}
+
+func (scheduler *BaseScheduler) PrependPostSuccessHandler(t int, handler func(task.TaskFuture, task.TaskResult)) {
+	handlers, ok := scheduler.postSuccessHandlers[t]
+	if !ok {
+		handlers = make([]func(task.TaskFuture, task.TaskResult), 0)
+	}
+	scheduler.postSuccessHandlers[t] = append([]func(task.TaskFuture, task.TaskResult){handler}, handlers...)
+}
+
+func (scheduler *BaseScheduler) AppendAbortedHandler(t int, handler func(task.TaskFuture)) {
+	handlers, ok := scheduler.abortedHandlers[t]
+	if !ok {
+		handlers = make([]func(task.TaskFuture), 0)
+	}
+	scheduler.abortedHandlers[t] = append(handlers, handler)
+}
+
+func (scheduler *BaseScheduler) PrependAbortedHandler(t int, handler func(task.TaskFuture)) {
+	handlers, ok := scheduler.abortedHandlers[t]
+	if !ok {
+		handlers = make([]func(task.TaskFuture), 0)
+	}
+	scheduler.abortedHandlers[t] = append([]func(task.TaskFuture){handler}, handlers...)
+}
+
 func (scheduler *BaseScheduler) Close() {
 	// NOTE: deprecated
 	// for _, v := range scheduler.inLimit {
@@ -388,10 +462,10 @@ func (scheduler *BaseScheduler) Close() {
 	// 	close(v)
 	// }
 	for _, v := range scheduler.inPool {
-		v.Release()
+		v.Close()
 	}
 	for _, v := range scheduler.outPool {
-		v.Release()
+		v.Close()
 	}
 	close(scheduler.in)
 	close(scheduler.out)

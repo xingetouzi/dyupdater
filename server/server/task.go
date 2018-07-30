@@ -8,25 +8,14 @@ import (
 	"strings"
 
 	"fxdayu.com/dyupdater/server/services"
-	"fxdayu.com/dyupdater/server/task"
 	"fxdayu.com/dyupdater/server/utils"
 	"github.com/deckarep/golang-set"
 	"github.com/gin-gonic/gin"
 )
 
 type taskInfo struct {
-	ID        string      `json:"id"`
-	ParentID  string      `json:"parent"`
-	TaskType  int         `json:"type"`
-	Retry     int         `json:"retry"`
-	Factor    string      `json:"factor"`
-	Start     int         `json:"start"`
-	End       int         `json:"end"`
-	Status    int         `json:"status"`
-	Published string      `json:"published"`
-	Updated   string      `json:"updated"`
-	Error     string      `json:"error"`
-	Children  []*taskInfo `json:"children,omitempty"`
+	utils.TaskArchiveRecord
+	Children []*taskInfo `json:"children,omitempty"`
 }
 
 var taskFilterFields = map[string]string{
@@ -100,24 +89,6 @@ func newSortHelper(arr ...interface{}) (helper *sortHelper) {
 	return
 }
 
-func getTaskInfo(tf *task.TaskFuture) (info *taskInfo) {
-	info = &taskInfo{
-		ID:        tf.ID,
-		ParentID:  tf.ParentID,
-		TaskType:  int(tf.Input.Type),
-		Retry:     tf.Retry,
-		Status:    tf.Status,
-		Published: tf.Published.Format("06/01/02 15:04:05"),
-		Updated:   tf.Updated.Format("06/01/02 15:04:05"),
-		Error:     tf.Error,
-	}
-	payload := tf.Input.Payload.(task.FactorTaskPayload)
-	info.Factor = payload.GetFactorID()
-	info.Start = payload.GetStartTime()
-	info.End = payload.GetEndTime()
-	return
-}
-
 func getDefaultQueryInt(c *gin.Context, key string, def int) int {
 	if val, ok := c.GetQuery(key); ok {
 		i, err := strconv.Atoi(val)
@@ -133,7 +104,7 @@ func handleTasks(fs *services.FactorServices) func(*gin.Context) {
 		tfs := utils.GetTaskArchive().All()
 		infos := make([]*taskInfo, 0, len(tfs))
 		for _, v := range tfs {
-			ti := getTaskInfo(v)
+			ti := &taskInfo{TaskArchiveRecord: v, Children: nil}
 			infos = append(infos, ti)
 		}
 		// filter

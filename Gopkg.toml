@@ -126,3 +126,7 @@ required = ["github.com/olebedev/on", "github.com/jteeuwen/go-bindata/go-bindata
 [[constraint]]
   name = "github.com/panjf2000/ants"
   version = "3.6.0"
+
+[[constraint]]
+  name = "github.com/Jeffail/tunny"
+  version = "0.1.1"

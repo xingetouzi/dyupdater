@@ -319,8 +319,8 @@ func (helper *CeleryHelper) putResult(result *CeleryTaskResponse) {
 	ch := helper.GetOutput(info.routerKey)
 	ch <- CeleryTaskResult{ID: info.taskID, Response: *result}
 	helper.store.Remove(result.CeleryID)
-	helper.abortTask(result.CeleryID)
-	log.Debugf("(Task %s) celery task %s: %s and ABORTED", info.taskID, result.CeleryID, result.State)
+	helper.deleteTask(result.CeleryID)
+	log.Debugf("(Task %s) celery task %s: %s and DELETED", info.taskID, result.CeleryID, result.State)
 }
 
 func (helper *CeleryHelper) fetchTask(task string) (*CeleryTaskResponse, error) {
@@ -416,26 +416,42 @@ func (helper *CeleryHelper) subscribe() {
 		time.Sleep(10 * time.Second)
 	}
 	go func() {
+		cache := make(map[string]int)
 		for recv := range helper.chEvent {
 			switch v := recv.(type) {
 			case string:
 				log.Debugf("Receive celery Event: %s", v)
 				if !helper.store.IsSet(v) {
-					log.Debugf("Skip unrelated celery Event: %s", v)
-					continue
-				}
-				helper.chEventLimit <- true
-				go func(id string) {
-					log.Debugf("Query celery task: %s", id)
-					for r, err := helper.fetchTask(id); ; {
-						if err == nil {
-							helper.putResult(r)
-							break
-						}
-						time.Sleep(100 * time.Millisecond)
+					count, ok := cache[v]
+					if !ok {
+						cache[v] = count
 					}
-					<-helper.chEventLimit
-				}(v)
+					if count >= 3 {
+						log.Debugf("Skip unrelated celery Event: %s", v)
+						helper.deleteTask(v)
+						delete(cache, v)
+					} else {
+						cache[v] = count + 1
+						wait := time.Duration(cache[v]) * time.Second
+						go func(taskID string, wait time.Duration) {
+							time.Sleep(wait)
+							helper.chEvent <- taskID
+						}(v, wait)
+					}
+				} else {
+					helper.chEventLimit <- true
+					go func(id string) {
+						log.Debugf("Query celery task: %s", id)
+						for r, err := helper.fetchTask(id); ; {
+							if err == nil {
+								helper.putResult(r)
+								break
+							}
+							time.Sleep(100 * time.Millisecond)
+						}
+						<-helper.chEventLimit
+					}(v)
+				}
 			case redis.Subscription:
 				helper.queryAll()
 			}
