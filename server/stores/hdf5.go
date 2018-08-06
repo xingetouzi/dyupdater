@@ -19,8 +19,10 @@ type hdf5StoreConfig struct {
 	Celery            string `mapstrucetrue:"celery"`
 	TaskCheck         string `mapstructrue:"task.check.name"`
 	TaskUpdate        string `mapstructrue:"task.update.name"`
+	TaskFetch         string `mapstructrue:"task.fetch.name"`
 	TaskCheckTimeout  int    `mapstructrue:"task.check.timeout"`
 	TaskUpdateTimeout int    `mapstructrue:"task.update.timeout"`
+	TaskFetchTimeout  int    `mapstructrue:"task.fetch.timeout"`
 }
 
 // HDF5Store 是将因子数据存为hdf5文件的因子存储
@@ -29,26 +31,25 @@ type hdf5StoreConfig struct {
 // HDF5Store 的配置项有：
 //   celery: celery实例名，任务会被发送到该celery实例，需要在celery配置中有对应的项。
 type HDF5Store struct {
+	BaseFactorStore
 	common.BaseComponent
 	helper           *celery.CeleryHelper
 	config           *hdf5StoreConfig
 	queueCheck       *celery.CeleryQueue
 	queueUpdate      *celery.CeleryQueue
-	taskChan         map[string]chan interface{}
+	queueFetch       *celery.CeleryQueue
+	taskChan         map[string]chan celeryResult
 	taskChanLock     sync.RWMutex
 	taskCheckPrefix  string
 	taskUpdatePrefix string
+	taskFetchPrefix  string
 	taskCheckCount   int
 	taskUpdateCount  int
+	taskFetchCount   int
 }
 
-type checkResult struct {
-	Index []int
-	Error error
-}
-
-type updateResult struct {
-	Count int
+type celeryResult struct {
+	Data  interface{}
 	Error error
 }
 
@@ -58,29 +59,34 @@ func (s *HDF5Store) Init(config *viper.Viper) {
 		Celery:            "default",
 		TaskCheck:         "stores.hdf5_check",
 		TaskUpdate:        "stores.hdf5_update",
-		TaskCheckTimeout:  180,
+		TaskFetch:         "stores.hdf5_fetch",
+		TaskCheckTimeout:  120,
 		TaskUpdateTimeout: 600,
+		TaskFetchTimeout:  180,
 	}
 	config.Unmarshal(s.config)
 	service := celery.GetCeleryService()
 	s.helper = service.MustGet(s.config.Celery)
 	s.taskCheckPrefix = "stores-hdf5-check"
 	s.taskUpdatePrefix = "stores-hdf5-update"
+	s.taskFetchPrefix = "stores-hdf5-fetch"
 	s.queueCheck = s.helper.GetQueue(s.config.TaskCheck, s.taskCheckPrefix)
 	s.queueUpdate = s.helper.GetQueue(s.config.TaskUpdate, s.taskUpdatePrefix)
-	s.taskChan = make(map[string]chan interface{})
+	s.queueFetch = s.helper.GetQueue(s.config.TaskFetch, s.taskFetchPrefix)
+	s.taskChan = make(map[string]chan celeryResult)
 	s.taskChanLock = sync.RWMutex{}
 	go s.handleCheckResult()
 	go s.handleUpdateResult()
+	go s.handleFetchResult()
 }
 
-func (s *HDF5Store) setTaskChan(id string, ch chan interface{}) {
+func (s *HDF5Store) setTaskChan(id string, ch chan celeryResult) {
 	s.taskChanLock.Lock()
 	defer s.taskChanLock.Unlock()
 	s.taskChan[id] = ch
 }
 
-func (s *HDF5Store) getTaskChan(id string) chan interface{} {
+func (s *HDF5Store) getTaskChan(id string) chan celeryResult {
 	s.taskChanLock.RLock()
 	defer s.taskChanLock.RUnlock()
 	ch, _ := s.taskChan[id]
@@ -98,12 +104,12 @@ func (s *HDF5Store) removeTaskChan(id string) {
 }
 
 func (s *HDF5Store) handleCheckResult() {
-	for celeryResult := range s.queueCheck.Output {
-		rep := celeryResult.Response
-		var ret checkResult
+	for result := range s.queueCheck.Output {
+		rep := result.Response
+		var ret celeryResult
 		if rep.Error != "" {
-			ret = checkResult{
-				Index: nil,
+			ret = celeryResult{
+				Data:  nil,
 				Error: errors.New(rep.Error),
 			}
 		} else {
@@ -111,32 +117,32 @@ func (s *HDF5Store) handleCheckResult() {
 			err := json.Unmarshal([]byte(rep.Result), &data)
 			if err != nil {
 				log.Error(err.Error())
-				ret = checkResult{
-					Index: nil,
+				ret = celeryResult{
+					Data:  nil,
 					Error: errors.New(rep.Error),
 				}
 			}
-			ret = checkResult{
-				Index: data,
+			ret = celeryResult{
+				Data:  data,
 				Error: nil,
 			}
 		}
-		ch := s.getTaskChan(celeryResult.ID)
+		ch := s.getTaskChan(result.ID)
 		if ch != nil {
 			ch <- ret
 		} else {
-			log.Warning("Unrelated celery task %s of stores.hdf5-check", celeryResult.ID)
+			log.Warning("Unrelated celery task %s of stores.hdf5-check", result.ID)
 		}
 	}
 }
 
 func (s *HDF5Store) handleUpdateResult() {
-	for celeryResult := range s.queueUpdate.Output {
-		rep := celeryResult.Response
-		var ret updateResult
+	for result := range s.queueUpdate.Output {
+		rep := result.Response
+		var ret celeryResult
 		if rep.Error != "" {
-			ret = updateResult{
-				Count: 0,
+			ret = celeryResult{
+				Data:  0,
 				Error: errors.New(rep.Error),
 			}
 		} else {
@@ -144,21 +150,54 @@ func (s *HDF5Store) handleUpdateResult() {
 			err := json.Unmarshal([]byte(rep.Result), &data)
 			if err != nil {
 				log.Error(err.Error())
-				ret = updateResult{
-					Count: 0,
+				ret = celeryResult{
+					Data:  0,
 					Error: errors.New(rep.Error),
 				}
 			}
-			ret = updateResult{
-				Count: data,
+			ret = celeryResult{
+				Data:  data,
 				Error: nil,
 			}
 		}
-		ch := s.getTaskChan(celeryResult.ID)
+		ch := s.getTaskChan(result.ID)
 		if ch != nil {
 			ch <- ret
 		} else {
-			log.Warning("Unrelated celery task %s of stores.hdf5-update", celeryResult.ID)
+			log.Warning("Unrelated celery task %s of stores.hdf5-update", result.ID)
+		}
+	}
+}
+
+func (s *HDF5Store) handleFetchResult() {
+	for result := range s.queueFetch.Output {
+		rep := result.Response
+		var ret celeryResult
+		if rep.Error != "" {
+			ret = celeryResult{
+				Data:  nil,
+				Error: errors.New(rep.Error),
+			}
+		} else {
+			data := models.FactorValue{}
+			err := utils.ParseFactorValue(rep.Result, &data)
+			if err != nil {
+				log.Error(err.Error())
+				ret = celeryResult{
+					Data:  nil,
+					Error: err,
+				}
+			}
+			ret = celeryResult{
+				Data:  data,
+				Error: err,
+			}
+		}
+		ch := s.getTaskChan(result.ID)
+		if ch != nil {
+			ch <- ret
+		} else {
+			log.Warning("Unrelated celery task %s of stores.hdf5-fetch", result.ID)
 		}
 	}
 }
@@ -174,16 +213,19 @@ func (s *HDF5Store) Check(factor models.Factor, index []int) ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	ch := make(chan interface{})
+	ch := make(chan celeryResult)
 	s.setTaskChan(taskID, ch)
 	defer s.removeTaskChan(taskID)
 	select {
 	case r := <-ch:
-		result, ok := r.(checkResult)
-		if !ok {
-			return nil, fmt.Errorf("Invalid check Result: %s", r)
+		if r.Error != nil {
+			return nil, r.Error
 		}
-		return result.Index, result.Error
+		result, ok := r.Data.([]int)
+		if !ok {
+			return nil, fmt.Errorf("Invalid check Result: %v", r.Data)
+		}
+		return result, r.Error
 	case <-time.After(time.Duration(s.config.TaskCheckTimeout) * time.Second):
 		return nil, fmt.Errorf("hdf5 check task timeout after %d seconds", s.config.TaskCheckTimeout)
 	}
@@ -214,18 +256,50 @@ func (s *HDF5Store) Update(factor models.Factor, factorValue models.FactorValue,
 	if err != nil {
 		return 0, err
 	}
-	ch := make(chan interface{})
+	ch := make(chan celeryResult)
 	s.setTaskChan(taskID, ch)
 	defer s.removeTaskChan(taskID)
 	select {
 	case r := <-ch:
-		result, ok := r.(updateResult)
-		if !ok {
-			return 0, fmt.Errorf("Invalid check Result: %s", r)
+		if r.Error != nil {
+			return 0, r.Error
 		}
-		return result.Count, result.Error
+		result, ok := r.Data.(int)
+		if !ok {
+			return 0, fmt.Errorf("Invalid check Result: %v", r.Data)
+		}
+		return result, r.Error
 	case <-time.After(time.Duration(s.config.TaskUpdateTimeout) * time.Second):
 		return 0, fmt.Errorf("hdf5 update task timeout after %d seconds", s.config.TaskUpdateTimeout)
+	}
+}
+
+func (s *HDF5Store) Fetch(factor models.Factor, dateRange models.DateRange) (models.FactorValue, error) {
+	data := map[string][]interface{}{
+		"args": []interface{}{factor.ID, dateRange.Start, dateRange.End},
+	}
+	jsonData, err := json.Marshal(data)
+	s.taskFetchCount++
+	taskID := fmt.Sprintf("%s-%d-%d", s.taskFetchPrefix, time.Now().Unix(), s.taskFetchCount)
+	_, err = s.queueFetch.Publish(taskID, jsonData)
+	if err != nil {
+		return models.FactorValue{}, err
+	}
+	ch := make(chan celeryResult)
+	s.setTaskChan(taskID, ch)
+	defer s.removeTaskChan(taskID)
+	select {
+	case r := <-ch:
+		if r.Error != nil {
+			return models.FactorValue{}, r.Error
+		}
+		result, ok := r.Data.(models.FactorValue)
+		if !ok {
+			return models.FactorValue{}, fmt.Errorf("Invalid fetch Result: %s", r)
+		}
+		return result, r.Error
+	case <-time.After(time.Duration(s.config.TaskFetchTimeout) * time.Second):
+		return models.FactorValue{}, fmt.Errorf("hdf5 fetch task timeout after %d seconds", s.config.TaskCheckTimeout)
 	}
 }
 
@@ -235,4 +309,5 @@ func (s *HDF5Store) Close() {
 	}
 	close(s.queueCheck.Output)
 	close(s.queueUpdate.Output)
+	close(s.queueFetch.Output)
 }

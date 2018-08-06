@@ -2,8 +2,10 @@ package utils
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 
+	"fxdayu.com/dyupdater/server/models"
 	"github.com/golang/snappy"
 	"github.com/vmihailenco/msgpack"
 )
@@ -31,4 +33,26 @@ func PackMsgpackSnappy(v ...interface{}) ([]byte, error) {
 		return bytes.Join([][]byte{[]byte("S"), tmp}, []byte("")), nil
 	}
 	return bytes.Join([][]byte{[]byte("\x00"), tmp}, []byte("")), nil
+}
+
+func ParseFactorValue(s string, data *models.FactorValue) error {
+	decodeBytes, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return err
+	}
+	err = UnpackMsgpackSnappy(decodeBytes, &data.Values)
+	if err != nil {
+		return err
+	}
+	date, ok := data.Values["trade_date"]
+	if !ok {
+		return errors.New("No trade_date in result")
+	}
+	delete(data.Values, "trade_date")
+	data.Datetime = make([]int, len(date))
+	for i, v := range date {
+		data.Datetime[i] = int(v)
+	}
+	data.DropNAN()
+	return nil
 }

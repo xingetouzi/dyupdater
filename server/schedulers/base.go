@@ -2,6 +2,7 @@ package schedulers
 
 import (
 	"container/list"
+	"fmt"
 	"runtime"
 	"strconv"
 	"strings"
@@ -43,7 +44,8 @@ type TaskScheduler interface {
 	PrependPostSuccessHandler(t int, handler func(task.TaskFuture, task.TaskResult))
 	PrependFailureHandler(t int, handler func(task.TaskFuture, error))
 	PrependAbortedHandler(t int, handler func(task.TaskFuture))
-	GetOutputChan() chan task.TaskResult
+	GetOutputChan(int) chan task.TaskResult
+	RegisterTaskType(int, int, int)
 	Wait(chan bool)
 }
 
@@ -54,10 +56,8 @@ type BaseScheduler struct {
 	failedHandlers      map[int][]func(task.TaskFuture, error)
 	postSuccessHandlers map[int][]func(task.TaskFuture, task.TaskResult)
 	abortedHandlers     map[int][]func(task.TaskFuture)
-	in                  chan string
-	out                 chan task.TaskResult
-	subIn               map[int]chan string
-	subOut              map[int]chan task.TaskResult
+	in                  map[int]chan string
+	out                 map[int]chan task.TaskResult
 	// NOTE: deprecated
 	// inLimit         map[int]chan bool
 	// outLimit        map[int]chan bool
@@ -78,61 +78,72 @@ func (scheduler *BaseScheduler) Init(config *viper.Viper) {
 	// NOTE: deprecated
 	// scheduler.inLimit = make(map[int]chan bool)
 	// scheduler.outLimit = make(map[int]chan bool)
-	scheduler.in = make(chan string, 1000000)
-	scheduler.out = make(chan task.TaskResult, 1000000)
-	scheduler.subIn = make(map[int]chan string)
-	scheduler.subOut = make(map[int]chan task.TaskResult)
+	scheduler.in = make(map[int]chan string)
+	scheduler.out = make(map[int]chan task.TaskResult)
 	scheduler.inPool = make(map[int]*tunny.Pool)
 	scheduler.outPool = make(map[int]*tunny.Pool)
 	scheduler.waitLock = &sync.Mutex{}
 	scheduler.waitChans = list.New()
 }
 
-func (scheduler *BaseScheduler) GetOutputChan() chan task.TaskResult {
-	return scheduler.out
+func (scheduler *BaseScheduler) GetOutputChan(taskType int) chan task.TaskResult {
+	outChan, ok := scheduler.out[taskType]
+	if !ok {
+		panic(fmt.Errorf("unregistered task type: %d", taskType))
+	}
+	return outChan
 }
 
-func (scheduler *BaseScheduler) newInPool(limit int) (*tunny.Pool, error) {
+func (scheduler *BaseScheduler) newInPool(taskType int, limit int) (*tunny.Pool, error) {
 	pool := tunny.NewFunc(limit, func(v interface{}) interface{} {
-		scheduler.handle(v.(*task.TaskFuture))
+		for taskID := range scheduler.in[taskType] {
+			tf, err := scheduler.taskStore.Get(taskID)
+			if err != nil {
+				log.Errorf("(Task %s) Not Found, Data may be lost.", taskID)
+			}
+			scheduler.handle(tf)
+		}
 		return nil
 	})
 	return pool, nil
 }
 
-func (scheduler *BaseScheduler) newOutPool(limit int) (*tunny.Pool, error) {
+func (scheduler *BaseScheduler) newOutPool(taskType int, limit int) (*tunny.Pool, error) {
 	pool := tunny.NewFunc(limit, func(v interface{}) interface{} {
-		scheduler.onSuccess(v.(task.TaskResult))
+		taskType := v.(int)
+		for result := range scheduler.out[taskType] {
+			scheduler.onSuccess(result)
+		}
 		return nil
 	})
 	return pool, nil
 }
 
-func (scheduler *BaseScheduler) SetInLimit(t int, limit int) {
+func (scheduler *BaseScheduler) SetInLimit(taskType int, limit int) {
 	// NOTE: deprecated
 	// scheduler.inLimit[t] = make(chan bool, limit)
-	pool, err := scheduler.newInPool(limit)
+	pool, err := scheduler.newInPool(taskType, limit)
 	if err != nil {
 		panic(err)
 	}
-	scheduler.inPool[t] = pool
+	scheduler.inPool[taskType] = pool
 }
 
-func (scheduler *BaseScheduler) SetOutLimit(t int, limit int) {
+func (scheduler *BaseScheduler) SetOutLimit(taskType int, limit int) {
 	// NOTE: deprecated
 	// scheduler.outLimit[t] = make(chan bool, limit)
-	pool, err := scheduler.newOutPool(limit)
+	pool, err := scheduler.newOutPool(taskType, limit)
 	if err != nil {
 		panic(err)
 	}
-	scheduler.outPool[t] = pool
+	scheduler.outPool[taskType] = pool
 }
 
 func (scheduler *BaseScheduler) getInPool(taskType int) *tunny.Pool {
 	pool, ok := scheduler.inPool[taskType]
 	if !ok {
 		var err error
-		pool, err = scheduler.newInPool(runtime.NumCPU())
+		pool, err = scheduler.newInPool(taskType, runtime.NumCPU())
 		if err != nil {
 			panic(err)
 		}
@@ -145,7 +156,7 @@ func (scheduler *BaseScheduler) getOutPool(taskType int) *tunny.Pool {
 	pool, ok := scheduler.outPool[taskType]
 	if !ok {
 		var err error
-		pool, err = scheduler.newOutPool(runtime.NumCPU())
+		pool, err = scheduler.newOutPool(taskType, runtime.NumCPU())
 		if err != nil {
 			panic(err)
 		}
@@ -174,29 +185,37 @@ func (scheduler *BaseScheduler) getOutPool(taskType int) *tunny.Pool {
 // 	return limitChan
 // }
 
+func (scheduler *BaseScheduler) RegisterTaskType(taskType int, inLen int, outLen int) {
+	_, ok := scheduler.in[taskType]
+	if ok {
+		panic(fmt.Errorf("task type %d has already been registered", taskType))
+	}
+	if inLen == 0 {
+		inLen = 100000 // unlimit
+	}
+	if outLen == 0 {
+		outLen = 100000 // unlimit
+	}
+	scheduler.in[taskType] = make(chan string, inLen)
+	scheduler.out[taskType] = make(chan task.TaskResult, outLen)
+	inPool := scheduler.getInPool(taskType)
+	for i := 0; i < int(inPool.GetSize()); i++ {
+		t := i
+		ants.Push(func() {
+			inPool.Process(t)
+		})
+	}
+	outPool := scheduler.getOutPool(taskType)
+	for i := 0; i < int(outPool.GetSize()); i++ {
+		t := i
+		ants.Push(func() {
+			outPool.Process(t)
+		})
+	}
+}
+
 func (scheduler *BaseScheduler) SetTaskStore(taskStore TaskStore) {
 	scheduler.taskStore = taskStore
-	go func() {
-		for taskID := range scheduler.in {
-			tf, err := scheduler.taskStore.Get(taskID)
-			if err != nil {
-				log.Errorf("(Task %s) Not Found, Data may be lost.", taskID)
-			}
-			pool := scheduler.getInPool(int(tf.Input.Type))
-			ants.Push(func() {
-				pool.Process(tf)
-			})
-		}
-	}()
-	go func() {
-		for result := range scheduler.out {
-			v := result
-			pool := scheduler.getOutPool(int(result.Type))
-			ants.Push(func() {
-				pool.Process(v)
-			})
-		}
-	}()
 	go func() {
 		for {
 			scheduler.checkWait()
@@ -234,6 +253,10 @@ func (scheduler *BaseScheduler) Wait(ch chan bool) {
 }
 
 func (scheduler *BaseScheduler) Publish(parent *task.TaskFuture, input task.TaskInput) *task.TaskFuture {
+	taskType := int(input.Type)
+	if _, ok := scheduler.in[taskType]; !ok {
+		panic(fmt.Errorf("unregistered task type: %d", taskType))
+	}
 	taskID := scheduler.taskStore.GetNextTaskId()
 	now := time.Now()
 	tf := &task.TaskFuture{ID: taskID, Input: input, Retry: 0, Status: task.TaskStatusPending, Published: now, Updated: now}
@@ -246,7 +269,7 @@ func (scheduler *BaseScheduler) Publish(parent *task.TaskFuture, input task.Task
 		return nil
 	}
 	scheduler.count++
-	scheduler.in <- tf.ID
+	scheduler.in[taskType] <- tf.ID
 	return tf
 }
 
@@ -286,6 +309,11 @@ func getRetryInterval(times int) uint {
 }
 
 func (scheduler *BaseScheduler) onFailed(tf *task.TaskFuture, err error) {
+	etnf, ok := err.(task.TaskNotFoundError)
+	if ok {
+		log.Errorf("(Task %s) %s", etnf.GetID(), etnf.Error())
+		return
+	}
 	handlers, ok := scheduler.failedHandlers[int(tf.Input.Type)]
 	if ok {
 		for _, handler := range handlers {
@@ -293,15 +321,18 @@ func (scheduler *BaseScheduler) onFailed(tf *task.TaskFuture, err error) {
 		}
 	}
 	log.Errorf("(Task %s) Failed due to: %s", tf.ID, err)
-	wait := time.Duration(getRetryInterval(tf.Retry + 1))
+	// return when task not found.
 	if tf.Retry < maxRetry {
+		wait := time.Duration(getRetryInterval(tf.Retry + 1))
 		log.Infof("(Task %s) Retry for %d time after %d second", tf.ID, tf.Retry+1, wait)
 		time.Sleep(wait * time.Second)
 		tf.Retry++
 		tf.Updated = time.Now()
 		tf.Error = err.Error()
 		scheduler.taskStore.Set(tf.ID, tf)
-		scheduler.in <- tf.ID
+		go func() {
+			scheduler.in[int(tf.Input.Type)] <- tf.ID
+		}()
 	} else {
 		log.Errorf("(Task %s) aborted", tf.ID)
 		scheduler.taskStore.Remove(tf.ID)
@@ -322,7 +353,7 @@ func (scheduler *BaseScheduler) onFailed(tf *task.TaskFuture, err error) {
 func (scheduler *BaseScheduler) onSuccess(output task.TaskResult) {
 	tf, err := scheduler.taskStore.Get(output.ID)
 	if err != nil {
-		log.Errorf("(Task %s) Task not Found", output.ID)
+		scheduler.onFailed(tf, task.NewTaskNotFoundError(tf.ID))
 		return
 	}
 	if output.Error != nil {
@@ -467,6 +498,10 @@ func (scheduler *BaseScheduler) Close() {
 	for _, v := range scheduler.outPool {
 		v.Close()
 	}
-	close(scheduler.in)
-	close(scheduler.out)
+	for _, v := range scheduler.in {
+		close(v)
+	}
+	for _, v := range scheduler.out {
+		close(v)
+	}
 }

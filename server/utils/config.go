@@ -7,9 +7,10 @@ import (
 )
 
 type globalConfigData struct {
-	CalStartDate   int `mapstructure:"cal-start-date"`
-	MinCalDuration int `mapstructure:"min-cal-duration"`
-	MaxCalDuration int `mapstructrue:"max-cal-duration"`
+	CalStartDate   int    `mapstructure:"cal-start-date"`
+	MinCalDuration int    `mapstructure:"min-cal-duration"`
+	MaxCalDuration int    `mapstructrue:"max-cal-duration"`
+	SyncFrom       string `mapstructrue:"sync-from"`
 }
 
 // GlobalConfig 是dyupdater全局配置，主要是一些计算相关的参数。
@@ -26,16 +27,17 @@ type globalConfigData struct {
    min-cal-duration: 2592000
 */
 type GlobalConfig struct {
-	config *globalConfigData
+	globalConfigData
 }
 
 var globalConfigInstance *GlobalConfig
 
 func init() {
-	globalConfigInstance = &GlobalConfig{config: new(globalConfigData)}
-	globalConfigInstance.config.CalStartDate, _ = strconv.Atoi(GetEnv("CAL_START_DATE", strconv.Itoa(20100101)))
-	globalConfigInstance.config.MaxCalDuration, _ = strconv.Atoi(GetEnv("MAX_CAL_DURATION", strconv.Itoa(5*365*24*60*60)))
-	globalConfigInstance.config.MinCalDuration, _ = strconv.Atoi(GetEnv("MIN_CAL_DURATION", strconv.Itoa(30*24*60*60)))
+	globalConfigInstance = &GlobalConfig{}
+	globalConfigInstance.CalStartDate, _ = strconv.Atoi(GetEnv("CAL_START_DATE", strconv.Itoa(20100101)))
+	globalConfigInstance.MinCalDuration, _ = strconv.Atoi(GetEnv("MIN_CAL_DURATION", strconv.Itoa(30*24*60*60)))
+	globalConfigInstance.MaxCalDuration, _ = strconv.Atoi(GetEnv("MAX_CAL_DURATION", strconv.Itoa(5*365*24*60*60)))
+	globalConfigInstance.SyncFrom = GetEnv("SYNC_FROM", "")
 }
 
 // GetGlobalConfig 用于获取全局配置
@@ -44,19 +46,24 @@ func GetGlobalConfig() *GlobalConfig {
 }
 
 func (gc *GlobalConfig) Init(config *viper.Viper) {
-	config.Unmarshal(gc.config)
+	config.Unmarshal(&gc.globalConfigData)
+	gc.SyncFrom = config.GetString("sync-from")
 }
 
 func (gc *GlobalConfig) GetCalStartDate() int {
-	return gc.config.CalStartDate
+	return gc.globalConfigData.CalStartDate
 }
 
 func (gc *GlobalConfig) GetMinCalDuration() int {
-	return gc.config.MinCalDuration
+	return gc.globalConfigData.MinCalDuration
 }
 
 func (gc *GlobalConfig) GetMaxCalDuration() int {
-	return gc.config.MaxCalDuration
+	return gc.globalConfigData.MaxCalDuration
+}
+
+func (gc *GlobalConfig) GetSyncFrom() string {
+	return gc.globalConfigData.SyncFrom
 }
 
 func (gc *GlobalConfig) Close() {

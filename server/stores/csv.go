@@ -49,6 +49,7 @@ type csvStoreConfig struct {
 // CSVStore 的配置项有：
 //   path: csv文件将存放在该目录下，不存在会自动创建，每一个因子对应一个同名csv文件。
 type CSVStore struct {
+	BaseFactorStore
 	common.BaseComponent
 	config *csvStoreConfig
 	locks  map[string]*sync.RWMutex

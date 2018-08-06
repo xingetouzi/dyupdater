@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -33,37 +34,37 @@ type FactorServices struct {
 	indexer     indexers.TradingDatetimeIndexer
 }
 
-func (this *FactorServices) RegisterSource(name string, source sources.FactorSource) {
-	this.sources[name] = source
+func (service *FactorServices) RegisterSource(name string, source sources.FactorSource) {
+	service.sources[name] = source
 }
 
-func (this *FactorServices) RegisterCalculator(name string, calculator calculators.FactorCalculator) {
-	this.calculators[name] = calculator
-	calculator.Subscribe(this.scheduler)
+func (service *FactorServices) RegisterCalculator(name string, calculator calculators.FactorCalculator) {
+	service.calculators[name] = calculator
+	calculator.Subscribe(service.scheduler)
 }
 
-func (this *FactorServices) RegisterStore(name string, store stores.FactorStore) {
-	this.stores[name] = store
+func (service *FactorServices) RegisterStore(name string, store stores.FactorStore) {
+	service.stores[name] = store
 }
 
-func (this *FactorServices) SetIndexer(indexer indexers.TradingDatetimeIndexer) {
-	this.indexer = indexer
+func (service *FactorServices) SetIndexer(indexer indexers.TradingDatetimeIndexer) {
+	service.indexer = indexer
 }
 
-func (this *FactorServices) GetScheduler() schedulers.TaskScheduler {
-	return this.scheduler
+func (service *FactorServices) GetScheduler() schedulers.TaskScheduler {
+	return service.scheduler
 }
 
-func (this *FactorServices) Check(factor models.Factor, dateRange models.DateRange) *task.TaskFuture {
+func (service *FactorServices) Check(factor models.Factor, dateRange models.DateRange) *task.TaskFuture {
 	stores := make([]string, 0)
-	for k, v := range this.stores {
+	for k, v := range service.stores {
 		if v.IsEnabled() {
 			stores = append(stores, k)
 		}
 	}
 	data := task.CheckTaskPayload{Stores: stores, Factor: factor, DateRange: dateRange}
 	t := task.TaskInput{Type: task.TaskTypeCheck, Payload: data}
-	tf := this.scheduler.Publish(nil, t)
+	tf := service.scheduler.Publish(nil, t)
 	return tf
 }
 
@@ -218,8 +219,9 @@ func (service *FactorServices) onCalSuccess(tf task.TaskFuture, r task.TaskResul
 		factorValue.Values[k] = v[startIndex:endIndex]
 	}
 	// update cal result
+	syncFrom := utils.GetGlobalConfig().GetSyncFrom()
 	for name, store := range service.stores {
-		if store.IsEnabled() {
+		if store.IsEnabled() && name != syncFrom {
 			payload := task.UpdateTaskPayload{Store: name, Factor: data.Factor, FactorValue: factorValue}
 			input := task.TaskInput{Type: task.TaskTypeUpdate, Payload: payload}
 			service.scheduler.Publish(&tf, input)
@@ -237,7 +239,7 @@ func (service *FactorServices) onCalFailed(tf task.TaskFuture, err error) {
 	log.Errorf("(Task %s) { %s } [ %d , %d ] Cal failed: %s", tf.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End, err)
 }
 
-func (this *FactorServices) onCheckFailed(tf task.TaskFuture, err error) {
+func (service *FactorServices) onCheckFailed(tf task.TaskFuture, err error) {
 	input := tf.Input
 	data, ok := input.Payload.(task.CalTaskPayload)
 	if !ok {
@@ -246,17 +248,17 @@ func (this *FactorServices) onCheckFailed(tf task.TaskFuture, err error) {
 	log.Errorf("(Task %s) { %s } [ %d , %d ] Check failed: %s", tf.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End, err)
 }
 
-func (this *FactorServices) handleCheck(tf *task.TaskFuture) error {
+func (service *FactorServices) handleCheck(tf *task.TaskFuture) error {
 	input := tf.Input
 	data, ok := input.Payload.(task.CheckTaskPayload)
 	if !ok {
 		return errors.New("Unvalid check task")
 	}
 	dateSet := mapset.NewSet()
-	index := this.indexer.GetIndex(data.DateRange)
+	index := service.indexer.GetIndex(data.DateRange)
 	log.Infof("(Task %s) { %s } [ %d , %d ] Check begin.", tf.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End)
 	for _, name := range data.Stores {
-		store, ok := this.stores[name]
+		store, ok := service.stores[name]
 		if !ok {
 			continue
 		}
@@ -291,20 +293,43 @@ func (this *FactorServices) handleCheck(tf *task.TaskFuture) error {
 	output.ID = tf.ID
 	output.Type = task.TaskTypeCheck
 	output.Result = result
-	out := this.scheduler.GetOutputChan()
+	out := service.scheduler.GetOutputChan(int(output.Type))
 	out <- *output
 	return nil
 }
 
-func (this *FactorServices) handleCal(tf *task.TaskFuture) error {
+func (service *FactorServices) handleCal(tf *task.TaskFuture) error {
 	input := tf.Input
 	data, ok := input.Payload.(task.CalTaskPayload)
 	if !ok {
 		return errors.New("Unvalid cal task")
 	}
-	calculator, ok := this.calculators[data.Calculator]
+	syncFrom := utils.GetGlobalConfig().GetSyncFrom()
+	if syncFrom != "" {
+		store, ok := service.stores[syncFrom]
+		if !ok {
+			panic(fmt.Errorf("store not found: %s", syncFrom))
+		}
+		log.Infof(
+			"(Task %s) { %s }  [ %d , %d ] Fetch begin.",
+			tf.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End,
+		)
+		if values, err := store.Fetch(data.Factor, data.DateRange); err != nil {
+			return err
+		} else {
+			output := new(task.TaskResult)
+			result := task.CalTaskResult{FactorValue: values}
+			output.ID = tf.ID
+			output.Type = task.TaskTypeCal
+			output.Result = result
+			out := service.scheduler.GetOutputChan(int(output.Type))
+			out <- *output
+			return nil
+		}
+	}
+	calculator, ok := service.calculators[data.Calculator]
 	if !ok {
-		return fmt.Errorf("Calculator not Found: %s", data.Calculator)
+		return fmt.Errorf("calculator not found: %s", data.Calculator)
 	}
 	log.Infof(
 		"(Task %s) { %s }  [ %d , %d ] Cal begin.",
@@ -340,7 +365,7 @@ func (service *FactorServices) handleUpdate(tf *task.TaskFuture) error {
 	output.ID = tf.ID
 	output.Type = task.TaskTypeUpdate
 	output.Result = result
-	out := service.scheduler.GetOutputChan()
+	out := service.scheduler.GetOutputChan(int(output.Type))
 	out <- *output
 	return nil
 }
@@ -370,6 +395,9 @@ func NewFactorServices(s schedulers.TaskScheduler) *FactorServices {
 	fs.sources = make(map[string]sources.FactorSource)
 	fs.calculators = make(map[string]calculators.FactorCalculator)
 	fs.stores = make(map[string]stores.FactorStore)
+	s.RegisterTaskType(int(task.TaskTypeCal), 0, runtime.NumCPU())
+	s.RegisterTaskType(int(task.TaskTypeCheck), 0, 0)
+	s.RegisterTaskType(int(task.TaskTypeUpdate), runtime.NumCPU(), 0)
 	s.AppendHandler(int(task.TaskTypeCal), fs.handleCal)
 	s.AppendHandler(int(task.TaskTypeCheck), fs.handleCheck)
 	s.AppendHandler(int(task.TaskTypeUpdate), fs.handleUpdate)

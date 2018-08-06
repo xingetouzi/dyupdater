@@ -35,6 +35,8 @@
 package stores
 
 import (
+	"fmt"
+
 	"fxdayu.com/dyupdater/server/common"
 	"fxdayu.com/dyupdater/server/models"
 	"fxdayu.com/dyupdater/server/utils"
@@ -48,4 +50,12 @@ type FactorStore interface {
 	common.Component
 	Update(models.Factor, models.FactorValue, bool) (int, error)
 	Check(models.Factor, []int) ([]int, error)
+	Fetch(models.Factor, models.DateRange) (models.FactorValue, error)
+}
+
+type BaseFactorStore struct {
+}
+
+func (bfs *BaseFactorStore) Fetch(models.Factor, models.DateRange) (models.FactorValue, error) {
+	return models.FactorValue{}, fmt.Errorf("FactorStore's Get method is not implement")
 }

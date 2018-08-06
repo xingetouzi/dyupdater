@@ -1,10 +1,8 @@
 package calculators
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"runtime"
 
 	"fxdayu.com/dyupdater/server/celery"
 	"fxdayu.com/dyupdater/server/common"
@@ -30,7 +28,6 @@ type CeleryCalculator struct {
 	helper  *celery.CeleryHelper
 	queue   *celery.CeleryQueue
 	running bool
-	limit   chan bool
 	out     chan task.TaskResult
 }
 
@@ -46,7 +43,6 @@ func (calculator *CeleryCalculator) Init(config *viper.Viper) {
 	}
 	config.Unmarshal(calculator.config)
 	calculator.running = true
-	calculator.limit = make(chan bool, runtime.NumCPU())
 	service := celery.GetCeleryService()
 	calculator.helper = service.MustGet(calculator.config.Celery)
 	calculator.queue = calculator.helper.GetQueue(calculator.config.Task, "calculator-celery")
@@ -63,28 +59,8 @@ func (calculator *CeleryCalculator) Cal(id string, factor models.Factor, dateRan
 	return err
 }
 
-func (calculator *CeleryCalculator) release() {
-	select {
-	case <-calculator.limit:
-	default:
-	}
-}
-
 func (calculator *CeleryCalculator) Subscribe(s schedulers.TaskScheduler) {
-	calculator.out = s.GetOutputChan()
-	s.AppendSuccessHandler(
-		int(task.TaskTypeCal),
-		func(task.TaskFuture, task.TaskResult) error {
-			calculator.release()
-			return nil
-		},
-	)
-	s.AppendFailureHandler(
-		int(task.TaskTypeCal),
-		func(task.TaskFuture, error) {
-			calculator.release()
-		},
-	)
+	calculator.out = s.GetOutputChan(int(task.TaskTypeCal))
 }
 
 type ResultResult struct {
@@ -93,31 +69,8 @@ type ResultResult struct {
 	Result string `json:"result"`
 }
 
-func parseBody(s string, data *models.FactorValue) error {
-	decodeBytes, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		return err
-	}
-	err = utils.UnpackMsgpackSnappy(decodeBytes, &data.Values)
-	if err != nil {
-		return err
-	}
-	date, ok := data.Values["trade_date"]
-	if !ok {
-		return errors.New("No trade_date in result")
-	}
-	delete(data.Values, "trade_date")
-	data.Datetime = make([]int, len(date))
-	for i, v := range date {
-		data.Datetime[i] = int(v)
-	}
-	data.DropNAN()
-	return nil
-}
-
 func (calculator *CeleryCalculator) handleResult() {
 	for celeryResult := range calculator.queue.Output {
-		calculator.limit <- true
 		rep := celeryResult.Response
 		var ret *task.TaskResult
 		if rep.Error != "" {
@@ -130,7 +83,7 @@ func (calculator *CeleryCalculator) handleResult() {
 			}
 		} else {
 			data := models.FactorValue{}
-			err := parseBody(rep.Result, &data)
+			err := utils.ParseFactorValue(rep.Result, &data)
 			result := task.CalTaskResult{FactorValue: data}
 			if err != nil {
 				log.Error(err.Error())
@@ -154,5 +107,4 @@ func (calculator *CeleryCalculator) handleResult() {
 
 func (calculator *CeleryCalculator) Close() {
 	calculator.running = false
-	close(calculator.limit)
 }

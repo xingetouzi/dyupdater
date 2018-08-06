@@ -1,6 +1,7 @@
 package stores
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -145,6 +146,56 @@ func (store *MongoStore) Check(factor models.Factor, index []int) ([]int, error)
 	}
 	sort.Ints(dateToUpdate)
 	return dateToUpdate, nil
+}
+
+func (store *MongoStore) Fetch(factor models.Factor, dateRange models.DateRange) (models.FactorValue, error) {
+	conn := store.session.Clone()
+	defer conn.Close()
+	col := conn.DB(store.config.Db).C(factor.ID)
+	start, err := utils.ItoDate(dateRange.Start)
+	end, err := utils.ItoDate(dateRange.End)
+	filter := bson.M{"datetime": bson.M{"$gte": start, "$lte": end}}
+	selector := bson.M{"_id": 0}
+	if err != nil {
+		return models.FactorValue{}, err
+	}
+	total, err := col.Find(filter).Count()
+	iter := col.Find(filter).Select(selector).Batch(100).Sort("datetime").Iter()
+	datetime := make([]int, 0, total)
+	values := make(map[string][]float64)
+	value := make(map[string]interface{})
+	count := 0
+	for iter.Next(&value) {
+		dt, ok := value["datetime"]
+		if !ok {
+			return models.FactorValue{}, fmt.Errorf("no datetime in localtime")
+		}
+		dtTime, ok := dt.(time.Time)
+		if !ok {
+			return models.FactorValue{}, fmt.Errorf("unvalid factor values data in %s: %v", factor.ID, dt)
+		}
+		dtPoint, _ := utils.Datetoi(dtTime)
+		datetime = append(datetime, dtPoint)
+		for k, v := range value {
+			if k != "datetime" {
+				vSlice, ok := values[k]
+				if !ok {
+					values[k] = make([]float64, count, total)
+					vSlice = values[k]
+				}
+				valuePoint, ok := v.(float64)
+				if !ok {
+					return models.FactorValue{}, fmt.Errorf("unvalid factor values data in %s: %v", factor.ID, v)
+				}
+				values[k] = append(vSlice, valuePoint)
+			}
+		}
+		count++
+	}
+	if err := iter.Close(); err != nil {
+		return models.FactorValue{}, err
+	}
+	return models.FactorValue{Datetime: datetime, Values: values}, nil
 }
 
 // Close the MongoStore, will close all mongodb connections.

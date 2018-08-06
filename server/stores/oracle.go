@@ -43,6 +43,7 @@ type oracleStoreConfig struct {
 //  url: 数据库url, url格式为：{username}/{password}@{host}:{port}/{sid}?{params},如：hr/hr@localhost:1521/xe?as=sysdba
 //  transaction: 是否每次写入都以事务的方式进行，建议开启，默认开启。
 type OracleStore struct {
+	BaseFactorStore
 	common.BaseComponent
 	helper *utils.SQLConnectHelper
 	config *oracleStoreConfig
