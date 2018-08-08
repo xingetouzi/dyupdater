@@ -23,8 +23,11 @@
 #   non-go = false
 #   go-tests = true
 #   unused-packages = true
-
 required = ["github.com/olebedev/on", "github.com/jteeuwen/go-bindata/go-bindata"]
+
+[[constraint]]
+  name = "github.com/Jeffail/tunny"
+  version = "0.1.1"
 
 [[constraint]]
   branch = "master"
@@ -39,16 +42,12 @@ required = ["github.com/olebedev/on", "github.com/jteeuwen/go-bindata/go-bindata
   version = "1.0.0"
 
 [[constraint]]
-  name = "github.com/garyburd/redigo"
-  version = "1.6.0"
-
-[[constraint]]
   branch = "master"
   name = "github.com/gin-contrib/static"
 
 [[constraint]]
   name = "github.com/gin-gonic/gin"
-  version = "1.1.4"
+  version = "1.2"
 
 [[constraint]]
   branch = "master"
@@ -71,6 +70,10 @@ required = ["github.com/olebedev/on", "github.com/jteeuwen/go-bindata/go-bindata
   name = "github.com/golang/snappy"
 
 [[constraint]]
+  name = "github.com/gomodule/redigo"
+  version = "2.0.0"
+
+[[constraint]]
   name = "github.com/gorilla/websocket"
   version = "1.2.0"
 
@@ -83,6 +86,10 @@ required = ["github.com/olebedev/on", "github.com/jteeuwen/go-bindata/go-bindata
   version = "1.0.0"
 
 [[constraint]]
+  name = "github.com/panjf2000/ants"
+  version = "3.6.0"
+
+[[constraint]]
   name = "github.com/robfig/cron"
   version = "1.1.0"
 
@@ -92,7 +99,7 @@ required = ["github.com/olebedev/on", "github.com/jteeuwen/go-bindata/go-bindata
 
 [[constraint]]
   name = "github.com/spf13/viper"
-  version = "1.0.2"
+  version = "1.1.0"
 
 [[constraint]]
   branch = "master"
@@ -122,11 +129,3 @@ required = ["github.com/olebedev/on", "github.com/jteeuwen/go-bindata/go-bindata
 [[override]]
   name = "github.com/olebedev/on"
   version = "0.2.0"
-
-[[constraint]]
-  name = "github.com/panjf2000/ants"
-  version = "3.6.0"
-
-[[constraint]]
-  name = "github.com/Jeffail/tunny"
-  version = "0.1.1"

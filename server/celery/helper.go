@@ -11,10 +11,9 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/garyburd/redigo/redis"
-
 	"fxdayu.com/dyupdater/server/utils"
 	"github.com/deckarep/golang-set"
+	"github.com/gomodule/redigo/redis"
 	"github.com/spf13/viper"
 )
 

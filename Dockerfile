@@ -53,7 +53,7 @@ ENV YARN_VERSION 1.7.0
 
 RUN npm install -g yarn@${YARN_VERSION}
 
-RUN go get -u github.com/golang/dep/cmd/dep
+RUN wget -O /usr/bin/dep https://github.com/golang/dep/releases/download/v0.5.0/dep-linux-amd64
 
 WORKDIR /go/src/fxdayu.com/dyupdater
 

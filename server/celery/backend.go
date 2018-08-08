@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/garyburd/redigo/redis"
 	"github.com/gocelery/gocelery"
+	"github.com/gomodule/redigo/redis"
 )
 
 type CustomRedisCeleryBackend struct {
@@ -19,22 +19,16 @@ type CustomRedisCeleryBackend struct {
 	db          string
 }
 
-func NewRedisPoolWithOptions(host, pass string, options ...redis.DialOption) *redis.Pool {
+func NewRedisPoolWithOptions(uri string, options ...redis.DialOption) *redis.Pool {
 	return &redis.Pool{
 		MaxIdle:     3,
 		IdleTimeout: 240 * time.Second,
 		Dial: func() (redis.Conn, error) {
-			c, err := redis.Dial("tcp", host, options...)
+			c, err := redis.DialURL(uri, options...)
 			if err != nil {
 				return nil, err
 			}
-			if pass != "" {
-				if _, err = c.Do("AUTH", pass); err != nil {
-					c.Close()
-					return nil, err
-				}
-			}
-			return c, err
+			return c, nil
 		},
 		TestOnBorrow: func(c redis.Conn, t time.Time) error {
 			_, err := c.Do("PING")
@@ -43,14 +37,14 @@ func NewRedisPoolWithOptions(host, pass string, options ...redis.DialOption) *re
 	}
 }
 
-func NewRedisCeleryBackendWithOptions(host, pass string, options ...redis.DialOption) *gocelery.RedisCeleryBackend {
+func NewRedisCeleryBackendWithOptions(uri string, options ...redis.DialOption) *gocelery.RedisCeleryBackend {
 	return &gocelery.RedisCeleryBackend{
-		Pool: NewRedisPoolWithOptions(host, pass, options...),
+		Pool: NewRedisPoolWithOptions(uri, options...),
 	}
 }
 
-func NewCustomRedisCeleryBackend(s string) *CustomRedisCeleryBackend {
-	u, err := url.Parse(s)
+func NewCustomRedisCeleryBackend(uri string) *CustomRedisCeleryBackend {
+	u, err := url.Parse(uri)
 	if err != nil {
 		panic(err)
 	}
@@ -69,13 +63,9 @@ func NewCustomRedisCeleryBackend(s string) *CustomRedisCeleryBackend {
 	}
 	db := redis.DialDatabase(dbInt)
 	host = fmt.Sprintf("%s:%s", host, port)
-	var pass = ""
-	if u.User != nil {
-		pass, _ = u.User.Password()
-	}
 	log.Infof("Connect to redis celery backend: %s/%s", host, path)
 	return &CustomRedisCeleryBackend{
-		RedisCeleryBackend: NewRedisCeleryBackendWithOptions(host, pass, db),
+		RedisCeleryBackend: NewRedisCeleryBackendWithOptions(uri, db),
 		subscribers:        make([]chan interface{}, 0),
 		db:                 path,
 	}
