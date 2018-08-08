@@ -54,7 +54,7 @@ ENV YARN_VERSION 1.7.0
 
 RUN npm config set registry=https://registry.npm.taobao.org && npm install -g yarn@${YARN_VERSION} && yarn config set registry https://registry.npm.taobao.org
 
-RUN wget -O /usr/bin/dep https://github.com/golang/dep/releases/download/v0.5.0/dep-linux-amd64
+RUN wget -O /usr/bin/dep https://github.com/golang/dep/releases/download/v0.5.0/dep-linux-amd64 && chmod +x /usr/bin/dep
 
 WORKDIR /go/src/fxdayu.com/dyupdater
 
