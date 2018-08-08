@@ -6,7 +6,8 @@ import (
 
 type Factor struct {
 	ID      string `json:"name"`
-	Formula string `json:"formula"`
+	Formula string `json:"formula,omitempty"`
+	Archive string `json:"archive,omitempty"`
 }
 
 type FactorValue struct {

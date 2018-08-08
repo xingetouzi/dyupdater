@@ -1,7 +1,7 @@
 package sources
 
 import (
-	"io/ioutil"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -72,7 +72,7 @@ func (source *FileSystemSource) Fetch() []models.Factor {
 		if filepath.Ext(filename) != ".py" {
 			return ret
 		}
-		factorName, _ := filepath.Rel(filepath.Dir(filename), filename)
+		_, factorName := filepath.Split(filename)
 		factorName = strings.TrimSuffix(factorName, ".py")
 		if source.config.Regex != "" {
 			match, _ := regexp.MatchString(source.config.Regex, factorName)
@@ -81,12 +81,17 @@ func (source *FileSystemSource) Fetch() []models.Factor {
 			}
 		}
 		factor := models.Factor{}
-		fileContent, err := ioutil.ReadFile(filename)
+		var fileContent []byte
+		if info.IsDir() {
+			fileContent, err = utils.ZipDirectory(filepath.Dir(filename))
+		} else {
+			fileContent, err = utils.ZipFile(filename)
+		}
 		if err != nil {
+			log.Error(err.Error())
 			return ret
 		}
-		fileContent = utils.StripBOM(fileContent)
-		factor.Formula = string(fileContent)
+		factor.Archive = base64.StdEncoding.EncodeToString(fileContent)
 		factor.ID = factorName
 		factors = append(factors, factor)
 		return ret
