@@ -62,6 +62,8 @@ func (source *FileSystemSource) Fetch() []models.Factor {
 			return filepath.SkipDir
 		} else if depth == 1 && info.IsDir() {
 			ret = filepath.SkipDir
+		} else if depth == 0 {
+			return nil
 		}
 		var filename string
 		if info.IsDir() {
@@ -69,7 +71,7 @@ func (source *FileSystemSource) Fetch() []models.Factor {
 		} else {
 			filename = path
 		}
-		if filepath.Ext(filename) != ".py" {
+		if !utils.IsExist(filename) || filepath.Ext(filename) != ".py" {
 			return ret
 		}
 		_, factorName := filepath.Split(filename)
