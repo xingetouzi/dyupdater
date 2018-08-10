@@ -31,3 +31,5 @@ data
 vendor/*/
 _vendor*
 Gopkg.lock
+
+mapping.csv

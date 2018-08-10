@@ -13,6 +13,7 @@ import (
 	"fxdayu.com/dyupdater/server/calculators"
 	"fxdayu.com/dyupdater/server/common"
 	"fxdayu.com/dyupdater/server/indexers"
+	"fxdayu.com/dyupdater/server/mappers"
 	"fxdayu.com/dyupdater/server/models"
 	"fxdayu.com/dyupdater/server/schedulers"
 	"fxdayu.com/dyupdater/server/sources"
@@ -32,6 +33,7 @@ type FactorServices struct {
 	count       sync.Map
 	scheduler   schedulers.TaskScheduler
 	indexer     indexers.TradingDatetimeIndexer
+	mapper      mappers.FactorNameMapper
 }
 
 func (service *FactorServices) RegisterSource(name string, source sources.FactorSource) {
@@ -49,6 +51,10 @@ func (service *FactorServices) RegisterStore(name string, store stores.FactorSto
 
 func (service *FactorServices) SetIndexer(indexer indexers.TradingDatetimeIndexer) {
 	service.indexer = indexer
+}
+
+func (service *FactorServices) SetMapper(mapper mappers.FactorNameMapper) {
+	service.mapper = mapper
 }
 
 func (service *FactorServices) GetScheduler() schedulers.TaskScheduler {
@@ -356,7 +362,11 @@ func (service *FactorServices) handleUpdate(tf *task.TaskFuture) error {
 	if !ok {
 		return fmt.Errorf("Store not Found: %s", data.Store)
 	}
-	count, err := store.Update(data.Factor, data.FactorValue, false)
+	newFactor := data.Factor
+	if service.mapper != nil {
+		newFactor.ID = service.mapper.Map(newFactor.ID)
+	}
+	count, err := store.Update(newFactor, data.FactorValue, false)
 	if err != nil {
 		return err
 	}
@@ -431,6 +441,10 @@ var indexerMap = map[string]reflect.Type{
 	"wind":  reflect.TypeOf(indexers.WindMssqlIndexer{}),
 }
 
+var mapperMap = map[string]reflect.Type{
+	"csv": reflect.TypeOf(mappers.CSVMapper{}),
+}
+
 func RegisterSourceType(name string, t reflect.Type) {
 	sourceMap[name] = t
 }
@@ -445,6 +459,10 @@ func RegisterStoreType(name string, t reflect.Type) {
 
 func RegisterIndexType(name string, t reflect.Type) {
 	indexerMap[name] = t
+}
+
+func RegisterMapperType(name string, t reflect.Type) {
+	mapperMap[name] = t
 }
 
 func getConfig() {
@@ -495,15 +513,15 @@ func NewFactorServiceFromConfig(p string) *FactorServices {
 			if ok {
 				source, ok := reflect.New(t).Interface().(sources.FactorSource)
 				if !ok {
-					panic(fmt.Errorf("Source %s with type %s is not valid factor sources!", name, t))
+					panic(fmt.Errorf("source %s with type %s is not valid FactorSource", name, t))
 				}
 				fs.RegisterSource(name, source)
 				components[source] = config
 			} else {
-				panic(fmt.Errorf("Source %s with unknown type %s!", name, tName))
+				panic(fmt.Errorf("source %s with unknown type %s", name, tName))
 			}
 		} else {
-			panic(fmt.Errorf("Source %s with undefine type!", name))
+			panic(fmt.Errorf("source %s with undefine type", name))
 		}
 	}
 	// parsse calculators config
@@ -515,15 +533,15 @@ func NewFactorServiceFromConfig(p string) *FactorServices {
 			if ok {
 				calculator, ok := reflect.New(t).Interface().(calculators.FactorCalculator)
 				if !ok {
-					panic(fmt.Errorf("Calculator %s with type %s is not a valid factor calculator!", name, t))
+					panic(fmt.Errorf("calculator %s with type %s is not a valid FactorCalculator", name, t))
 				}
 				fs.RegisterCalculator(name, calculator)
 				components[calculator] = config
 			} else {
-				panic(fmt.Errorf("Calculator %s with unknown type %s!", name, tName))
+				panic(fmt.Errorf("calculator %s with unknown type %s", name, tName))
 			}
 		} else {
-			panic(fmt.Errorf("Calculator %s with undefine type!", name))
+			panic(fmt.Errorf("calculator %s with undefine type", name))
 		}
 	}
 	// parse stores config
@@ -535,36 +553,57 @@ func NewFactorServiceFromConfig(p string) *FactorServices {
 			if ok {
 				store, ok := reflect.New(t).Interface().(stores.FactorStore)
 				if !ok {
-					panic(fmt.Errorf("Store %s with type %s is not a valid factor store!", name, t))
+					panic(fmt.Errorf("store %s with type %s is not a valid FactorStore", name, t))
 				}
 				fs.RegisterStore(name, store)
 				components[store] = config
 			} else {
-				panic(fmt.Errorf("Store %s with unknown type %s!", name, tName))
+				panic(fmt.Errorf("store %s with unknown type %s", name, tName))
 			}
 		} else {
-			panic(fmt.Errorf("Store %s with undefine type!", name))
+			panic(fmt.Errorf("store %s with undefine type", name))
 		}
 	}
 	// parse indexer config
-	if !viper.IsSet("indexer") {
-		panic(errors.New("no indexer config is provided\n"))
-	}
-	config := viper.Sub("indexer")
-	if config.IsSet("type") {
-		tName := config.GetString("type")
-		t, ok := indexerMap[tName]
-		if ok {
-			indexer, ok := reflect.New(t).Interface().(indexers.TradingDatetimeIndexer)
-			if !ok {
-				panic(fmt.Errorf("Indexer with type %s is not a valid factor store!", t))
+	if viper.IsSet("indexer") {
+		config := viper.Sub("indexer")
+		if config.IsSet("type") {
+			tName := config.GetString("type")
+			t, ok := indexerMap[tName]
+			if ok {
+				indexer, ok := reflect.New(t).Interface().(indexers.TradingDatetimeIndexer)
+				if !ok {
+					panic(fmt.Errorf("indexer with type %s is not a valid TradingDatetimeIndexer", t))
+				}
+				fs.SetIndexer(indexer)
+				components[indexer] = config
 			}
-			fs.SetIndexer(indexer)
-			components[indexer] = config
+		} else {
+			panic(fmt.Errorf("indexer with undefine type"))
 		}
 	} else {
-		panic(fmt.Errorf("Indexer with undefine type!"))
+		panic(errors.New("no indexer config is provided"))
 	}
+
+	// parse mapper config
+	if viper.IsSet("mapper") {
+		config := viper.Sub("mapper")
+		if config.IsSet("type") {
+			tName := config.GetString("type")
+			t, ok := mapperMap[tName]
+			if ok {
+				mapper, ok := reflect.New(t).Interface().(mappers.FactorNameMapper)
+				if !ok {
+					panic(fmt.Errorf("mapper with type %s is not a valid FactorNameMapper", t))
+				}
+				fs.SetMapper(mapper)
+				components[mapper] = config
+			}
+		} else {
+			log.Warning(errors.New("no mapper config is provided").Error())
+		}
+	}
+	// init all components
 	for v, c := range components {
 		v.Init(c)
 	}
