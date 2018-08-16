@@ -11,5 +11,5 @@ var log = utils.AppLogger
 //FactorNameMapper.Map,接受一个因子在因子源中的ID，返回其在因子存储中对应的ID。
 type FactorNameMapper interface {
 	common.Configable
-	Map(factorID string) string
+	Map(store string, factorID string) string
 }

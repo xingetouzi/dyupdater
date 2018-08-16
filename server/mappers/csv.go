@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/deckarep/golang-set"
+
 	"fxdayu.com/dyupdater/server/common"
 	"fxdayu.com/dyupdater/server/utils"
 	"github.com/gocarina/gocsv"
@@ -20,20 +22,25 @@ type csvMappingRecord struct {
 type csvMappingRecords []*csvMappingRecord
 
 type csvMapperConfig struct {
-	File  string `mapstructure:"file"`
-	Watch bool   `mapstructure:"watch"`
+	File   string        `mapstructure:"file"`
+	Watch  bool          `mapstructure:"watch"`
+	Stores []interface{} `mapstructure:"stores"`
 }
 
 type CSVMapper struct {
 	common.BaseComponent
 	config    csvMapperConfig
 	factorMap map[string]string
+	stores    mapset.Set
 }
 
 func (mapper *CSVMapper) Init(config *viper.Viper) {
 	mapper.BaseComponent.Init(config)
-	mapper.config = csvMapperConfig{Watch: true}
+	mapper.config = csvMapperConfig{
+		Watch: true,
+	}
 	config.Unmarshal(&mapper.config)
+	mapper.stores = mapset.NewSetFromSlice(mapper.config.Stores)
 	if mapper.config.File == "" {
 		panic(errors.New("CSVMapper's mapping file should be specify"))
 	} else if !utils.IsExist(mapper.config.File) {
@@ -105,7 +112,11 @@ func (mapper *CSVMapper) load() {
 	}
 }
 
-func (mapper *CSVMapper) Map(factorID string) string {
+func (mapper *CSVMapper) Map(store string, factorID string) string {
+	stores := mapper.stores
+	if stores.Cardinality() > 0 && !stores.Contains(store) {
+		return factorID
+	}
 	mapped, ok := mapper.factorMap[factorID]
 	if !ok {
 		return factorID

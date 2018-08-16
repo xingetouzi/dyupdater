@@ -61,6 +61,14 @@ func (service *FactorServices) GetScheduler() schedulers.TaskScheduler {
 	return service.scheduler
 }
 
+func (service *FactorServices) mapFactor(store string, factor models.Factor) (newFactor models.Factor) {
+	newFactor = factor
+	if service.mapper != nil {
+		newFactor.ID = service.mapper.Map(store, newFactor.ID)
+	}
+	return
+}
+
 func (service *FactorServices) Check(factor models.Factor, dateRange models.DateRange) *task.TaskFuture {
 	stores := make([]string, 0)
 	for k, v := range service.stores {
@@ -263,12 +271,14 @@ func (service *FactorServices) handleCheck(tf *task.TaskFuture) error {
 	dateSet := mapset.NewSet()
 	index := service.indexer.GetIndex(data.DateRange)
 	log.Infof("(Task %s) { %s } [ %d , %d ] Check begin.", tf.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End)
+	syncFrom := utils.GetGlobalConfig().GetSyncFrom()
 	for _, name := range data.Stores {
 		store, ok := service.stores[name]
-		if !ok {
+		newFactor := service.mapFactor(name, data.Factor)
+		if !ok || name == syncFrom {
 			continue
 		}
-		dates, err := store.Check(data.Factor, index)
+		dates, err := store.Check(newFactor, index)
 		if err != nil {
 			log.Warningf("(Task %s) { %s } [ %d , %d ] Store[%s] check failed: %s.", tf.ID, data.GetFactorID(),
 				data.GetStartTime(), data.GetEndTime(), name, err.Error())
@@ -362,11 +372,7 @@ func (service *FactorServices) handleUpdate(tf *task.TaskFuture) error {
 	if !ok {
 		return fmt.Errorf("Store not Found: %s", data.Store)
 	}
-	newFactor := data.Factor
-	if service.mapper != nil {
-		newFactor.ID = service.mapper.Map(newFactor.ID)
-	}
-	count, err := store.Update(newFactor, data.FactorValue, false)
+	count, err := store.Update(service.mapFactor(data.Store, data.Factor), data.FactorValue, false)
 	if err != nil {
 		return err
 	}

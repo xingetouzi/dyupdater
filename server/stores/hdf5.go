@@ -1,7 +1,6 @@
 package stores
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -232,20 +231,10 @@ func (s *HDF5Store) Check(factor models.Factor, index []int) ([]int, error) {
 }
 
 func (s *HDF5Store) Update(factor models.Factor, factorValue models.FactorValue, replace bool) (int, error) {
-	values := make(map[string][]float64)
-	for k, v := range factorValue.Values {
-		values[k] = v
-	}
-	dts := make([]float64, len(factorValue.Datetime))
-	for i, v := range factorValue.Datetime {
-		dts[i] = float64(v)
-	}
-	values["trade_date"] = dts
-	tmp, err := utils.PackMsgpackSnappy(values)
+	factorValueString, err := utils.PackFactorValue(factorValue)
 	if err != nil {
 		return 0, err
 	}
-	factorValueString := base64.StdEncoding.EncodeToString(tmp)
 	data := map[string][]interface{}{
 		"args": []interface{}{factor.ID, factorValueString},
 	}
@@ -266,7 +255,7 @@ func (s *HDF5Store) Update(factor models.Factor, factorValue models.FactorValue,
 		}
 		result, ok := r.Data.(int)
 		if !ok {
-			return 0, fmt.Errorf("Invalid check Result: %v", r.Data)
+			return 0, fmt.Errorf("Invalid update Result: %v", r.Data)
 		}
 		return result, r.Error
 	case <-time.After(time.Duration(s.config.TaskUpdateTimeout) * time.Second):

@@ -165,6 +165,7 @@ func (store *MongoStore) Fetch(factor models.Factor, dateRange models.DateRange)
 	values := make(map[string][]float64)
 	value := make(map[string]interface{})
 	count := 0
+	nan := math.NaN()
 	for iter.Next(&value) {
 		dt, ok := value["datetime"]
 		if !ok {
@@ -182,12 +183,23 @@ func (store *MongoStore) Fetch(factor models.Factor, dateRange models.DateRange)
 				if !ok {
 					values[k] = make([]float64, count, total)
 					vSlice = values[k]
+					for i := 0; i < count; i++ {
+						vSlice[i] = nan
+					}
 				}
 				valuePoint, ok := v.(float64)
 				if !ok {
 					return models.FactorValue{}, fmt.Errorf("unvalid factor values data in %s: %v", factor.ID, v)
 				}
 				values[k] = append(vSlice, valuePoint)
+			}
+		}
+		for k, v := range values {
+			if k != "datetime" {
+				_, ok := value[k]
+				if !ok && len(v) == count {
+					values[k] = append(v, nan)
+				}
 			}
 		}
 		count++

@@ -56,3 +56,20 @@ func ParseFactorValue(s string, data *models.FactorValue) error {
 	data.DropNAN()
 	return nil
 }
+
+func PackFactorValue(data models.FactorValue) (string, error) {
+	values := make(map[string][]float64)
+	for k, v := range data.Values {
+		values[k] = v
+	}
+	dts := make([]float64, len(data.Datetime))
+	for i, v := range data.Datetime {
+		dts[i] = float64(v)
+	}
+	values["trade_date"] = dts
+	tmp, err := PackMsgpackSnappy(values)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(tmp), nil
+}
