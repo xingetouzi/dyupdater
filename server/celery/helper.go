@@ -55,17 +55,18 @@ type celeryHelperConfig struct {
 }
 
 type CeleryHelper struct {
-	config       *celeryHelperConfig
-	running      bool
-	store        taskMapStore
-	backend      *CustomRedisCeleryBackend
-	broker       *AMQPCeleryBroker
-	clients      []*FlowerWsClient
-	chEvent      chan interface{}
-	chEventLimit chan bool
-	chQueryAll   chan bool
-	out          map[string]chan CeleryTaskResult
-	term         chan bool
+	config          *celeryHelperConfig
+	running         bool
+	store           taskMapStore
+	backend         *CustomRedisCeleryBackend
+	broker          *AMQPCeleryBroker
+	clients         []*FlowerWsClient
+	chEvent         chan interface{}
+	chEventLimit    map[string]chan bool
+	chEventLimitCap map[string]int
+	chQueryAll      chan bool
+	out             map[string]chan CeleryTaskResult
+	term            chan bool
 }
 
 // CeleryService Celery是python的分布式任务队列模块
@@ -253,7 +254,9 @@ func (helper *CeleryHelper) Run() {
 		}
 	}()
 	helper.clients = make([]*FlowerWsClient, 2)
-	helper.chEventLimit = make(chan bool, runtime.NumCPU())
+	helper.chEventLimitCap = make(map[string]int)
+	helper.chEventLimitCap["factor.cal"] = runtime.NumCPU() // TODO config it rather than hard code
+	helper.chEventLimit = make(map[string]chan bool)
 	helper.chEvent = make(chan interface{}, 100000)
 	helper.chQueryAll = make(chan bool)
 	helper.out = make(map[string]chan CeleryTaskResult)
@@ -317,6 +320,7 @@ func (helper *CeleryHelper) putResult(result *CeleryTaskResponse) {
 	}
 	ch := helper.GetOutput(info.routerKey)
 	ch <- CeleryTaskResult{ID: info.taskID, Response: *result}
+	helper.limitCountDown(result.CeleryID)
 	helper.store.Remove(result.CeleryID)
 	helper.deleteTask(result.CeleryID)
 	log.Debugf("(Task %s) celery task %s: %s and DELETED", info.taskID, result.CeleryID, result.State)
@@ -384,14 +388,15 @@ func (helper *CeleryHelper) doQueryAll() {
 		if !helper.running {
 			break
 		}
-		helper.chEventLimit <- true
-		go func() {
+		helper.limitCountUp(tid)
+		go func(tid string) {
 			r, err := helper.fetchTask(tid)
 			if err == nil {
 				helper.putResult(r)
+			} else {
+				helper.limitCountDown(tid)
 			}
-			<-helper.chEventLimit
-		}()
+		}(tid)
 		time.Sleep(20 * time.Millisecond)
 	}
 }
@@ -403,6 +408,42 @@ func (helper *CeleryHelper) GetOutput(routerkey string) chan CeleryTaskResult {
 		helper.out[routerkey] = ch
 	}
 	return ch
+}
+
+func (helper *CeleryHelper) getChEventLimit(routerKey string) chan bool {
+	chEventLimt, ok := helper.chEventLimit[routerKey]
+	if !ok {
+		chEventLimitCap, ok := helper.chEventLimitCap[routerKey]
+		if !ok {
+			chEventLimitCap = 100000 // unlimit
+		}
+		chEventLimt = make(chan bool, chEventLimitCap)
+		helper.chEventLimit[routerKey] = chEventLimt
+	}
+	return chEventLimt
+}
+
+func (helper *CeleryHelper) limitCountUp(celeryID string) {
+	info, err := helper.store.Get(celeryID)
+	if err != nil {
+		log.Error(err.Error())
+		return
+	}
+	chEventLimt := helper.getChEventLimit(info.routerKey)
+	chEventLimt <- true
+}
+
+func (helper *CeleryHelper) limitCountDown(celeryID string) {
+	info, err := helper.store.Get(celeryID)
+	if err != nil {
+		log.Error(err.Error())
+		return
+	}
+	chEventLimit := helper.getChEventLimit(info.routerKey)
+	select {
+	case <-chEventLimit:
+	default:
+	}
 }
 
 func (helper *CeleryHelper) subscribe() {
@@ -438,17 +479,18 @@ func (helper *CeleryHelper) subscribe() {
 						}(v, wait)
 					}
 				} else {
-					helper.chEventLimit <- true
-					go func(id string) {
-						log.Debugf("Query celery task: %s", id)
-						for r, err := helper.fetchTask(id); ; {
+					helper.limitCountUp(v)
+					go func(tid string) {
+						log.Debugf("Query celery task: %s", tid)
+						for r, err := helper.fetchTask(tid); ; {
 							if err == nil {
 								helper.putResult(r)
 								break
+							} else {
+								log.Errorf("%s", err)
 							}
 							time.Sleep(100 * time.Millisecond)
 						}
-						<-helper.chEventLimit
 					}(v)
 				}
 			case redis.Subscription:
@@ -505,7 +547,9 @@ func (helper *CeleryHelper) Close() {
 		client.Close()
 	}
 	close(helper.chEvent)
-	close(helper.chEventLimit)
+	for _, v := range helper.chEventLimit {
+		close(v)
+	}
 	close(helper.term)
 	for _, v := range helper.out {
 		close(v)

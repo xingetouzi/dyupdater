@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"fxdayu.com/dyupdater/server/task"
+
 	"fxdayu.com/dyupdater/server/common"
 	"fxdayu.com/dyupdater/server/models"
 	"fxdayu.com/dyupdater/server/utils"
@@ -51,10 +53,18 @@ func (store *MongoStore) Init(config *viper.Viper) {
 	}
 }
 
-func (store *MongoStore) getFactorDateSet(factor models.Factor) (mapset.Set, error) {
+func (store *MongoStore) getFactorIndentity(factor models.Factor, processType task.FactorProcessType) string {
+	if processType == task.ProcessTypeNone {
+		return factor.ID
+	}
+	return factor.ID + "__" + string(processType)
+}
+
+func (store *MongoStore) getFactorDateSet(factor models.Factor, processType task.FactorProcessType) (mapset.Set, error) {
 	conn := store.session.Clone()
 	defer conn.Close()
-	col := conn.DB(store.config.Db).C(factor.ID)
+	factorID := store.getFactorIndentity(factor, processType)
+	col := conn.DB(store.config.Db).C(factorID)
 	iter := col.Find(nil).Select(bson.M{"datetime": true}).Batch(1000).Iter()
 	var value factorDatetime
 	dateSet := mapset.NewSet()
@@ -69,10 +79,11 @@ func (store *MongoStore) getFactorDateSet(factor models.Factor) (mapset.Set, err
 }
 
 // Update factor data of given factor and factor values in MongoStore.
-func (store *MongoStore) Update(factor models.Factor, factorValue models.FactorValue, replace bool) (int, error) {
+func (store *MongoStore) Update(factor models.Factor, processType task.FactorProcessType, factorValue models.FactorValue, replace bool) (int, error) {
 	conn := store.session.Clone()
 	defer conn.Close()
-	col := conn.DB(store.config.Db).C(factor.ID)
+	factorID := store.getFactorIndentity(factor, processType)
+	col := conn.DB(store.config.Db).C(factorID)
 	err := col.EnsureIndexKey("-datetime")
 	if err != nil {
 		return 0, err
@@ -82,7 +93,7 @@ func (store *MongoStore) Update(factor models.Factor, factorValue models.FactorV
 	if !replace {
 		// getFactorDateSet sometimes lead to timeout error, add retry.
 		for i := 0; i < 3; i++ {
-			dateSet, _ = store.getFactorDateSet(factor)
+			dateSet, _ = store.getFactorDateSet(factor, processType)
 			if dateSet != nil {
 				break
 			}
@@ -131,13 +142,13 @@ func (store *MongoStore) Update(factor models.Factor, factorValue models.FactorV
 }
 
 // Check factor data for given factor and daterange in MongoStore.
-func (store *MongoStore) Check(factor models.Factor, index []int) ([]int, error) {
+func (store *MongoStore) Check(factor models.Factor, processType task.FactorProcessType, index []int) ([]int, error) {
 	indexSet := mapset.NewSet()
 	for _, v := range index {
 		indexSet.Add(interface{}(v))
 	}
 	var dateToUpdate []int
-	dates, err := store.getFactorDateSet(factor)
+	dates, err := store.getFactorDateSet(factor, processType)
 	if err != nil {
 		return nil, err
 	}

@@ -66,7 +66,7 @@ func main() {
 					archive.Set(tr)
 					return nil
 				}
-				taskTypes := []int{int(task.TaskTypeCheck), int(task.TaskTypeCal), int(task.TaskTypeUpdate)}
+				taskTypes := []int{int(task.TaskTypeCheck), int(task.TaskTypeCal), int(task.TaskTypeUpdate), int(task.TaskTypeProcess)}
 				for _, t := range taskTypes {
 					scheduler.PrependHandler(t, archiveHandler)
 					scheduler.AppendPostSuccessHandler(t, func(tf task.TaskFuture, r task.TaskResult) {

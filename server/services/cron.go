@@ -33,17 +33,17 @@ type CronTask struct {
   cron:
     enabled: true
     tasks:
-    # 定时任务everyday，将在每周一至周五的5:00 ~ 8:59分每5分钟运行一次，检查范围为上周到昨天截止
+    # 定时任务everyday，将在每周一至周六凌晨的5:00 ~ 8:59分每30分钟运行一次，检查范围为上周到昨天截止
     # crontab的规则定义可以参考 https://crontab.guru
     everyday:
-      # At every 5th minute past every hour from 5 through 8 on every day-of-week from Monday through Friday.
-      rule: "0 *\/5 5-8 * * 1-5"
+      # At every 30th minute past every hour from 5 through 8 on every day-of-week from Monday through Saturday.
+      rule: "0 *\/30 5-8 * * 1-6"
       # start time from now , in seconds, 604800 = 7*24*60*60 = 7days.
       startDelta: 604800
-    # 定时任务everyweekends，将在每个周末每隔8小时运行一次，检查范围为从20100101开始到昨天截止
+    # 定时任务everyweekends，将在每个周日每隔8小时运行一次，检查范围为从20100101开始到昨天截止
     everyweekends:
-      # past every 8th hour on Sunday and Saturday.
-      rule: "0 0 *\/8 \* \* 0,6"
+      # past every 8th hour on Sunday.
+      rule: "0 0 *\/8 \* \* 0"
       # start time in format "20060102"
       start: 20100101
 */

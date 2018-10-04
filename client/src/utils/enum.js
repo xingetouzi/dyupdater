@@ -2,6 +2,7 @@ const taskType = {
   CHECK: 0,
   CAL: 1,
   UPDATE: 2,
+  PROCESS: 3,
 };
 
 const taskState = {

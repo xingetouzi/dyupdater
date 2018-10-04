@@ -17,14 +17,14 @@ type globalConfigData struct {
 // 配置的位置在整个配置文件中的base项。
 // 可配置选项有：
 //   cal-start-date # 计算开始时间，可以通过环境变量CAL_START_DATE指定，默认20100101
-//   max-cal-duration # 最长计算时间,以秒为单位，计算任务会按时间被切分，最长不超过该值。可以通过环境变量MAX_CAL_DURATION指定，默认5*365*24*60*60=5年
-//   min-cal-duration # 最短计算时间，以秒为单位，计算任务会填补到至少有该值的长度，可以通过环境变量MIN_CAL_DURATION指定，默认30*24*60*60=1月
+//   max-cal-duration # 最长计算区间长度,以秒为单位，计算任务会按时间被切分，最长不超过该值。可以通过环境变量MAX_CAL_DURATION指定，默认5*365*24*60*60=5年
+//   min-cal-duration # 最短计算区间长度，以秒为单位，计算任务会填补到至少有该值的长度，可以通过环境变量MIN_CAL_DURATION指定，默认30*24*60*60=1月
 // 配置示例:
 /*
  base:
    cal-start-date: 20140101
-   max-cal-duration: 157680000
-   min-cal-duration: 2592000
+   max-cal-duration: 157680000 # 5年
+   min-cal-duration: 2592000 # 1月
 */
 type GlobalConfig struct {
 	globalConfigData

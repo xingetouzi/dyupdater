@@ -14,8 +14,9 @@ import (
 )
 
 type celeryCalculatorConfig struct {
-	Celery string `mapstructrue:"celery"`
-	Task   string `mapstructrue:"task"`
+	Celery      string `mapstructrue:"celery"`
+	TaskCal     string `mapstructrue:"tasks.cal.name"`
+	TaskProcess string `mapstructrue:"tasks.process.name"`
 }
 
 // CeleryCalculator 将因子计算任务发送给celery并监控任务运行。
@@ -24,11 +25,13 @@ type celeryCalculatorConfig struct {
 //   task: celery中用于因子计算的任务名(一般无需改动)
 type CeleryCalculator struct {
 	common.BaseComponent
-	config  *celeryCalculatorConfig
-	helper  *celery.CeleryHelper
-	queue   *celery.CeleryQueue
-	running bool
-	out     chan task.TaskResult
+	config       *celeryCalculatorConfig
+	helper       *celery.CeleryHelper
+	queueCal     *celery.CeleryQueue
+	queueProcess *celery.CeleryQueue
+	running      bool
+	outCal       chan task.TaskResult
+	outProcess   chan task.TaskResult
 }
 
 type asyncApplyResult struct {
@@ -38,15 +41,18 @@ type asyncApplyResult struct {
 func (calculator *CeleryCalculator) Init(config *viper.Viper) {
 	calculator.BaseComponent.Init(config)
 	calculator.config = &celeryCalculatorConfig{
-		Celery: "default",
-		Task:   "factor.cal",
+		Celery:      "default",
+		TaskCal:     "factor.cal",
+		TaskProcess: "factor.process",
 	}
 	config.Unmarshal(calculator.config)
 	calculator.running = true
 	service := celery.GetCeleryService()
 	calculator.helper = service.MustGet(calculator.config.Celery)
-	calculator.queue = calculator.helper.GetQueue(calculator.config.Task, "calculator-celery")
-	go calculator.handleResult()
+	calculator.queueCal = calculator.helper.GetQueue(calculator.config.TaskCal, "calculator-celery-cal")
+	calculator.queueProcess = calculator.helper.GetQueue(calculator.config.TaskProcess, "calculator-celery-process")
+	go calculator.handleResultCal()
+	go calculator.handleResultProcess()
 }
 
 func (calculator *CeleryCalculator) Cal(id string, factor models.Factor, dateRange models.DateRange) error {
@@ -55,12 +61,24 @@ func (calculator *CeleryCalculator) Cal(id string, factor models.Factor, dateRan
 	if err != nil {
 		return err
 	}
-	_, err = calculator.queue.Publish(id, jsonData)
+	_, err = calculator.queueCal.Publish(id, jsonData)
+	return err
+}
+
+func (calculator *CeleryCalculator) Process(id string, factor models.Factor, factorValue models.FactorValue, processType task.FactorProcessType) error {
+	factorValueStr, err := utils.PackFactorValue(factorValue)
+	if err != nil {
+		return err
+	}
+	data := map[string][]interface{}{"args": []interface{}{factor.ID, factorValueStr, string(processType)}}
+	jsonData, err := json.Marshal(data)
+	_, err = calculator.queueProcess.Publish(id, jsonData)
 	return err
 }
 
 func (calculator *CeleryCalculator) Subscribe(s schedulers.TaskScheduler) {
-	calculator.out = s.GetOutputChan(int(task.TaskTypeCal))
+	calculator.outCal = s.GetOutputChan(int(task.TaskTypeCal))
+	calculator.outProcess = s.GetOutputChan(int(task.TaskTypeProcess))
 }
 
 type ResultResult struct {
@@ -69,8 +87,8 @@ type ResultResult struct {
 	Result string `json:"result"`
 }
 
-func (calculator *CeleryCalculator) handleResult() {
-	for celeryResult := range calculator.queue.Output {
+func (calculator *CeleryCalculator) handleResultCal() {
+	for celeryResult := range calculator.queueCal.Output {
 		rep := celeryResult.Response
 		var ret *task.TaskResult
 		if rep.Error != "" {
@@ -101,7 +119,43 @@ func (calculator *CeleryCalculator) handleResult() {
 				Error:  nil,
 			}
 		}
-		calculator.out <- *ret
+		calculator.outCal <- *ret
+	}
+}
+
+func (calculator *CeleryCalculator) handleResultProcess() {
+	for celeryResult := range calculator.queueProcess.Output {
+		rep := celeryResult.Response
+		var ret *task.TaskResult
+		if rep.Error != "" {
+			result := task.ProcessTaskResult{FactorValue: models.FactorValue{}}
+			ret = &task.TaskResult{
+				ID:     celeryResult.ID,
+				Type:   task.TaskTypeProcess,
+				Result: result,
+				Error:  errors.New(rep.Error),
+			}
+		} else {
+			data := models.FactorValue{}
+			err := utils.ParseFactorValue(rep.Result, &data)
+			result := task.ProcessTaskResult{FactorValue: data}
+			if err != nil {
+				log.Error(err.Error())
+				ret = &task.TaskResult{
+					ID:     celeryResult.ID,
+					Type:   task.TaskTypeProcess,
+					Result: result,
+					Error:  err,
+				}
+			}
+			ret = &task.TaskResult{
+				ID:     celeryResult.ID,
+				Type:   task.TaskTypeProcess,
+				Result: result,
+				Error:  nil,
+			}
+		}
+		calculator.outProcess <- *ret
 	}
 }
 

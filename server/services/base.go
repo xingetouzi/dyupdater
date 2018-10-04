@@ -6,7 +6,6 @@ import (
 	"os"
 	"reflect"
 	"runtime"
-	"sort"
 	"sync"
 	"time"
 
@@ -20,11 +19,17 @@ import (
 	"fxdayu.com/dyupdater/server/stores"
 	"fxdayu.com/dyupdater/server/task"
 	"fxdayu.com/dyupdater/server/utils"
-	"github.com/deckarep/golang-set"
 	"github.com/spf13/viper"
 )
 
 var log = utils.AppLogger
+
+type FactorTaskHandler interface {
+	GetTaskType() task.TaskType
+	Handle(tf *task.TaskFuture) error
+	OnSuccess(tf task.TaskFuture, r task.TaskResult) error
+	OnFailed(tf task.TaskFuture, err error)
+}
 
 type FactorServices struct {
 	sources     map[string]sources.FactorSource
@@ -34,6 +39,12 @@ type FactorServices struct {
 	scheduler   schedulers.TaskScheduler
 	indexer     indexers.TradingDatetimeIndexer
 	mapper      mappers.FactorNameMapper
+}
+
+func (service *FactorServices) RegisterHandler(handler FactorTaskHandler) {
+	service.scheduler.AppendHandler(int(handler.GetTaskType()), handler.Handle)
+	service.scheduler.AppendSuccessHandler(int(handler.GetTaskType()), handler.OnSuccess)
+	service.scheduler.AppendFailureHandler(int(handler.GetTaskType()), handler.OnFailed)
 }
 
 func (service *FactorServices) RegisterSource(name string, source sources.FactorSource) {
@@ -76,9 +87,8 @@ func (service *FactorServices) Check(factor models.Factor, dateRange models.Date
 			stores = append(stores, k)
 		}
 	}
-	data := task.CheckTaskPayload{Stores: stores, Factor: factor, DateRange: dateRange}
-	t := task.TaskInput{Type: task.TaskTypeCheck, Payload: data}
-	tf := service.scheduler.Publish(nil, t)
+	ti := task.NewCheckTaskInput(stores, factor, dateRange, task.ProcessTypeNone)
+	tf := service.scheduler.Publish(nil, ti)
 	return tf
 }
 
@@ -95,9 +105,8 @@ func (service *FactorServices) CheckWithLock(factor models.Factor, dateRange mod
 			stores = append(stores, k)
 		}
 	}
-	data := task.CheckTaskPayload{Stores: stores, Factor: factor, DateRange: dateRange}
-	t := task.TaskInput{Type: task.TaskTypeCheck, Payload: data}
-	tf := service.scheduler.Publish(nil, t)
+	ti := task.NewCheckTaskInput(stores, factor, dateRange, task.ProcessTypeNone)
+	tf := service.scheduler.Publish(nil, ti)
 	if tf != nil {
 		service.count.Store(factor.ID, 1)
 	}
@@ -155,256 +164,6 @@ func (service *FactorServices) Wait(timeout int) {
 	}
 }
 
-func (service *FactorServices) onCheckSuccess(tf task.TaskFuture, r task.TaskResult) error {
-	result, ok := r.Result.(task.CheckTaskResult)
-	if !ok {
-		return errors.New("Unvalid check result")
-	}
-	data := tf.Input.Payload.(task.CheckTaskPayload)
-	var first, last int
-	l := len(result.Datetimes)
-	if l > 0 {
-		first = result.Datetimes[0]
-		last = result.Datetimes[l-1]
-		log.Infof("(Task %s) {%s} [ %d , %d ] Check finish, missing data in (%d ... %d).", r.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End, first, last)
-	} else {
-		log.Infof("(Task %s) {%s} [ %d , %d ] Check finish, no missing data found.", r.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End)
-	}
-	maxCalDuration := utils.GetGlobalConfig().GetMaxCalDuration()
-	minCalDuration := utils.GetGlobalConfig().GetMinCalDuration()
-	if len(result.Datetimes) > 0 {
-		var ranges []models.DateRange
-		var current *models.DateRange
-		for _, v := range result.Datetimes {
-			if current == nil {
-				current = &models.DateRange{Start: v, End: v}
-			} else {
-				current.End = v
-				s, _ := utils.ItoDate(current.Start)
-				e, _ := utils.ItoDate(current.End)
-				if int(e.Sub(s).Seconds()) <= maxCalDuration {
-					continue
-				} else {
-					ranges = append(ranges, *current)
-					current = nil
-				}
-			}
-		}
-		if current != nil {
-			s, _ := utils.ItoDate(current.Start)
-			e, _ := utils.ItoDate(current.End)
-			if int(e.Sub(s).Seconds()) <= minCalDuration {
-				newS := e.Add(-time.Duration(minCalDuration) * time.Second)
-				current.Start, _ = utils.Datetoi(newS)
-			}
-			ranges = append(ranges, *current)
-		}
-		for _, dateRange := range ranges {
-			calData := task.CalTaskPayload{Calculator: calculators.DefaultCalculator, Factor: data.Factor, DateRange: dateRange}
-			calInput := task.TaskInput{Type: task.TaskTypeCal, Payload: calData}
-			service.scheduler.Publish(&tf, calInput)
-		}
-	}
-	return nil
-}
-
-func (service *FactorServices) onCalSuccess(tf task.TaskFuture, r task.TaskResult) error {
-	result, ok := r.Result.(task.CalTaskResult)
-	if !ok {
-		return errors.New("Unvalid cal result")
-	}
-	data := tf.Input.Payload.(task.CalTaskPayload)
-	log.Infof("(Task %s) { %s } [ %d , %d ] Cal finish.", r.ID, data.GetFactorID(), data.GetStartTime(), data.GetEndTime())
-	// trunc cal result
-	calStartDate := utils.GetGlobalConfig().GetCalStartDate()
-	factorValue := models.FactorValue{}
-	if data.DateRange.Start > calStartDate {
-		calStartDate = data.DateRange.Start
-	}
-	startIndex := sort.SearchInts(result.FactorValue.Datetime, calStartDate)
-	endIndex := sort.Search(len(result.FactorValue.Datetime), func(i int) bool { return result.FactorValue.Datetime[i] > data.DateRange.End })
-	if startIndex >= len(result.FactorValue.Datetime) {
-		log.Infof("(Task %s) { %s } [ %d , %d ] No data to update.", r.ID, data.GetFactorID(), data.GetStartTime(), data.GetEndTime())
-		return nil
-	}
-	factorValue.Datetime = result.FactorValue.Datetime[startIndex:endIndex]
-	factorValue.Values = map[string][]float64{}
-	for k, v := range result.FactorValue.Values {
-		factorValue.Values[k] = v[startIndex:endIndex]
-	}
-	// update cal result
-	syncFrom := utils.GetGlobalConfig().GetSyncFrom()
-	for name, store := range service.stores {
-		if store.IsEnabled() && name != syncFrom {
-			payload := task.UpdateTaskPayload{Store: name, Factor: data.Factor, FactorValue: factorValue}
-			input := task.TaskInput{Type: task.TaskTypeUpdate, Payload: payload}
-			service.scheduler.Publish(&tf, input)
-		}
-	}
-	return nil
-}
-
-func (service *FactorServices) onCalFailed(tf task.TaskFuture, err error) {
-	input := tf.Input
-	data, ok := input.Payload.(task.CalTaskPayload)
-	if !ok {
-		return
-	}
-	log.Errorf("(Task %s) { %s } [ %d , %d ] Cal failed: %s", tf.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End, err)
-}
-
-func (service *FactorServices) onCheckFailed(tf task.TaskFuture, err error) {
-	input := tf.Input
-	data, ok := input.Payload.(task.CalTaskPayload)
-	if !ok {
-		return
-	}
-	log.Errorf("(Task %s) { %s } [ %d , %d ] Check failed: %s", tf.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End, err)
-}
-
-func (service *FactorServices) handleCheck(tf *task.TaskFuture) error {
-	input := tf.Input
-	data, ok := input.Payload.(task.CheckTaskPayload)
-	if !ok {
-		return errors.New("Unvalid check task")
-	}
-	dateSet := mapset.NewSet()
-	index := service.indexer.GetIndex(data.DateRange)
-	log.Infof("(Task %s) { %s } [ %d , %d ] Check begin.", tf.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End)
-	syncFrom := utils.GetGlobalConfig().GetSyncFrom()
-	for _, name := range data.Stores {
-		store, ok := service.stores[name]
-		newFactor := service.mapFactor(name, data.Factor)
-		if !ok || name == syncFrom {
-			continue
-		}
-		dates, err := store.Check(newFactor, index)
-		if err != nil {
-			log.Warningf("(Task %s) { %s } [ %d , %d ] Store[%s] check failed: %s.", tf.ID, data.GetFactorID(),
-				data.GetStartTime(), data.GetEndTime(), name, err.Error())
-			return err
-		}
-		if dates != nil {
-			newSet := mapset.NewSet()
-			for _, v := range dates {
-				newSet.Add(v)
-			}
-			dateSet = dateSet.Union(newSet)
-		}
-	}
-	allDates := make([]int, dateSet.Cardinality())
-	for i, v := range dateSet.ToSlice() {
-		allDates[i] = v.(int)
-	}
-	sort.Ints(allDates)
-	startIndex := sort.SearchInts(allDates, data.DateRange.Start)
-	var endIndex int
-	if data.DateRange.End <= 0 {
-		endIndex = len(allDates)
-	} else {
-		endIndex = sort.Search(len(allDates), func(i int) bool { return allDates[i] > data.DateRange.End })
-	}
-	output := new(task.TaskResult)
-	result := task.CheckTaskResult{Datetimes: allDates[startIndex:endIndex]}
-	output.ID = tf.ID
-	output.Type = task.TaskTypeCheck
-	output.Result = result
-	out := service.scheduler.GetOutputChan(int(output.Type))
-	out <- *output
-	return nil
-}
-
-func (service *FactorServices) handleCal(tf *task.TaskFuture) error {
-	input := tf.Input
-	data, ok := input.Payload.(task.CalTaskPayload)
-	if !ok {
-		return errors.New("Unvalid cal task")
-	}
-	syncFrom := utils.GetGlobalConfig().GetSyncFrom()
-	if syncFrom != "" {
-		store, ok := service.stores[syncFrom]
-		if !ok {
-			panic(fmt.Errorf("store not found: %s", syncFrom))
-		}
-		log.Infof(
-			"(Task %s) { %s }  [ %d , %d ] Fetch begin.",
-			tf.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End,
-		)
-		if values, err := store.Fetch(data.Factor, data.DateRange); err != nil {
-			return err
-		} else {
-			output := new(task.TaskResult)
-			result := task.CalTaskResult{FactorValue: values}
-			output.ID = tf.ID
-			output.Type = task.TaskTypeCal
-			output.Result = result
-			out := service.scheduler.GetOutputChan(int(output.Type))
-			out <- *output
-			return nil
-		}
-	}
-	calculator, ok := service.calculators[data.Calculator]
-	if !ok {
-		return fmt.Errorf("calculator not found: %s", data.Calculator)
-	}
-	log.Infof(
-		"(Task %s) { %s }  [ %d , %d ] Cal begin.",
-		tf.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End,
-	)
-	err := calculator.Cal(tf.ID, data.Factor, data.DateRange)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (service *FactorServices) handleUpdate(tf *task.TaskFuture) error {
-	input := tf.Input
-	data, ok := input.Payload.(task.UpdateTaskPayload)
-	if !ok {
-		return errors.New("Unvalid update task")
-	}
-	log.Infof(
-		"(Task %s) { %s }  [ %d , %d ] Update begin.",
-		tf.ID, data.Factor.ID, data.GetStartTime(), data.GetEndTime(),
-	)
-	store, ok := service.stores[data.Store]
-	if !ok {
-		return fmt.Errorf("Store not Found: %s", data.Store)
-	}
-	count, err := store.Update(service.mapFactor(data.Store, data.Factor), data.FactorValue, false)
-	if err != nil {
-		return err
-	}
-	output := new(task.TaskResult)
-	result := task.UpdateTaskResult{Count: count}
-	output.ID = tf.ID
-	output.Type = task.TaskTypeUpdate
-	output.Result = result
-	out := service.scheduler.GetOutputChan(int(output.Type))
-	out <- *output
-	return nil
-}
-
-func (service *FactorServices) onUpdateSuccess(tf task.TaskFuture, r task.TaskResult) error {
-	result, ok := r.Result.(task.UpdateTaskResult)
-	if !ok {
-		return errors.New("Unvalid cal result")
-	}
-	data := tf.Input.Payload.(task.UpdateTaskPayload)
-	log.Infof("(Task %s) { %s } [ %d , %d ] Update finish. %d record was updated.", r.ID, data.Factor.ID, data.GetStartTime(), data.GetEndTime(), result.Count)
-	return nil
-}
-
-func (service *FactorServices) onUpdateFailed(tf task.TaskFuture, err error) {
-	input := tf.Input
-	data, ok := input.Payload.(task.UpdateTaskPayload)
-	if !ok {
-		return
-	}
-	log.Errorf("(Task %s) { %s } [ %d , %d ] Update failed in store %s: %s", tf.ID, data.Factor.ID, data.GetStartTime(), data.GetEndTime(), data.Store, err)
-}
-
 func NewFactorServices(s schedulers.TaskScheduler) *FactorServices {
 	fs := &FactorServices{}
 	fs.scheduler = s
@@ -414,15 +173,11 @@ func NewFactorServices(s schedulers.TaskScheduler) *FactorServices {
 	s.RegisterTaskType(int(task.TaskTypeCal), 0, runtime.NumCPU())
 	s.RegisterTaskType(int(task.TaskTypeCheck), 0, 0)
 	s.RegisterTaskType(int(task.TaskTypeUpdate), runtime.NumCPU(), 0)
-	s.AppendHandler(int(task.TaskTypeCal), fs.handleCal)
-	s.AppendHandler(int(task.TaskTypeCheck), fs.handleCheck)
-	s.AppendHandler(int(task.TaskTypeUpdate), fs.handleUpdate)
-	s.AppendSuccessHandler(int(task.TaskTypeCal), fs.onCalSuccess)
-	s.AppendSuccessHandler(int(task.TaskTypeCheck), fs.onCheckSuccess)
-	s.AppendSuccessHandler(int(task.TaskTypeUpdate), fs.onUpdateSuccess)
-	s.AppendFailureHandler(int(task.TaskTypeCal), fs.onCalFailed)
-	s.AppendFailureHandler(int(task.TaskTypeCheck), fs.onCheckFailed)
-	s.AppendFailureHandler(int(task.TaskTypeUpdate), fs.onUpdateFailed)
+	s.RegisterTaskType(int(task.TaskTypeProcess), runtime.NumCPU(), runtime.NumCPU())
+	fs.RegisterHandler(newCalTaskHandler(fs))
+	fs.RegisterHandler(newCheckTaskHandler(fs))
+	fs.RegisterHandler(newUpdateTaskHandler(fs))
+	fs.RegisterHandler(newProcessTaskHandler(fs))
 	return fs
 }
 
@@ -478,7 +233,7 @@ func getConfig() {
 	viper.AddConfigPath("/etc/fxdayu/")
 	err := viper.ReadInConfig()
 	if err != nil {
-		panic(fmt.Errorf("Fatal error in config file: %s\n", err))
+		panic(fmt.Errorf("fatal error in config file: %s", err))
 	}
 }
 

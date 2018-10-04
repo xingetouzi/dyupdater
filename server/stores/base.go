@@ -37,6 +37,8 @@ package stores
 import (
 	"fmt"
 
+	"fxdayu.com/dyupdater/server/task"
+
 	"fxdayu.com/dyupdater/server/common"
 	"fxdayu.com/dyupdater/server/models"
 	"fxdayu.com/dyupdater/server/utils"
@@ -48,8 +50,8 @@ var log = utils.AppLogger
 // and can check and update it.
 type FactorStore interface {
 	common.Component
-	Update(models.Factor, models.FactorValue, bool) (int, error)
-	Check(models.Factor, []int) ([]int, error)
+	Check(models.Factor, task.FactorProcessType, []int) ([]int, error)
+	Update(models.Factor, task.FactorProcessType, models.FactorValue, bool) (int, error)
 	Fetch(models.Factor, models.DateRange) (models.FactorValue, error)
 }
 

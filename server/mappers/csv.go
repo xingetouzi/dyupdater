@@ -27,6 +27,14 @@ type csvMapperConfig struct {
 	Stores []interface{} `mapstructure:"stores"`
 }
 
+// CSVMapper 从CSV文件中读取因子名映射表，如某因子名出现在表中，则对其进行映射，否则则保持原因子名。
+// CSV映射表格式如下：
+//   | source | store |
+// source列表示映射前的因子名，store列表示映射后的因子名。
+//
+// CSVMapper的配置项如下：
+//   file: 对应CSV映射表文件的位置。
+//   stores: array of string, 表示哪些要对哪些stores启用映射，如果不指定，则默认对所有的stores都启用映射。
 type CSVMapper struct {
 	common.BaseComponent
 	config    csvMapperConfig

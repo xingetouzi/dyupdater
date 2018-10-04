@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"fxdayu.com/dyupdater/server/task"
+
 	"fxdayu.com/dyupdater/server/celery"
 
 	"fxdayu.com/dyupdater/server/common"
@@ -25,8 +27,10 @@ type oracleStoreConfig struct {
 	URL               string `mapstructure:"url"`
 	Db                string `mapstructure:"db"`
 	Transaction       bool   `mapstructure:"transaction"`
+	TaskFetch         string `mapstructure:"task.fetch.name"`
 	TaskUpdate        string `mapstructure:"task.update.name"`
 	TaskUpdateTimeout int    `mapstructure:"task.update.timeout"`
+	TaskFetchTimeout  int    `mapstructure:"task.fetch.timeout"`
 }
 
 type oracleFactorValue struct {
@@ -61,8 +65,11 @@ type OracleStore struct {
 	config           *oracleStoreConfig
 	taskChan         map[string]chan celeryResult
 	taskChanLock     sync.RWMutex
+	queueFetch       *celery.CeleryQueue
 	queueUpdate      *celery.CeleryQueue
+	taskFetchPrefix  string
 	taskUpdatePrefix string
+	taskFetchCount   int
 	taskUpdateCount  int
 }
 
@@ -73,7 +80,9 @@ func (s *OracleStore) Init(config *viper.Viper) {
 		Celery:            "default",
 		URL:               utils.GetEnv("ORACLE_URL", "sys/.@?as=sysdba"),
 		Transaction:       true,
+		TaskFetch:         "stores.oracle_fetch",
 		TaskUpdate:        "stores.oracle_update",
+		TaskFetchTimeout:  180,
 		TaskUpdateTimeout: 600,
 	}
 	config.Unmarshal(s.config)
@@ -83,12 +92,15 @@ func (s *OracleStore) Init(config *viper.Viper) {
 	s.helper = utils.NewSQLConnectHelper("oracle", "oci8", s.config.URL)
 	service := celery.GetCeleryService()
 	celeryHelper := service.MustGet(s.config.Celery)
+	s.taskFetchPrefix = "stores-oracle-fetch"
 	s.taskUpdatePrefix = "stores-oracle-update"
+	s.queueFetch = celeryHelper.GetQueue(s.config.TaskFetch, s.taskFetchPrefix)
 	s.queueUpdate = celeryHelper.GetQueue(s.config.TaskUpdate, s.taskUpdatePrefix)
 	s.taskChan = make(map[string]chan celeryResult)
 	s.taskChanLock = sync.RWMutex{}
 	log.Infof("Connect to oracle host: %s", s.config.URL)
 	s.helper.Connect()
+	go s.handleFetchResult()
 	go s.handleUpdateResult()
 }
 
@@ -102,7 +114,7 @@ func (s *OracleStore) creatTable(name string) error {
 		processedtype varchar(20)
 	)`)
 	buf := new(bytes.Buffer)
-	err = tmpl.Execute(buf, map[string]string{"username": s.config.Db, "tablename": s.trimIdentity(name)})
+	err = tmpl.Execute(buf, map[string]string{"username": s.config.Db, "tablename": name})
 	if err != nil {
 		log.Error(err.Error())
 		return err
@@ -131,14 +143,32 @@ func (s *OracleStore) trimIdentity(id string) string {
 	return id
 }
 
+func (s *OracleStore) getFactorIndentity(factor models.Factor, processType task.FactorProcessType) string {
+	factorID := factor.ID
+	if processType == task.ProcessTypeNone {
+		factorID = strings.ToLower(factorID)
+	}
+	factorID = s.trimIdentity(factorID)
+	return factorID
+}
+
+func (s *OracleStore) getProcessedTypeStr(processType task.FactorProcessType) string {
+	if processType == task.ProcessTypeNone {
+		return "R"
+	}
+	return string(processType)
+}
+
 // Check factor data for given factor and daterange in OracleStore.
-func (s *OracleStore) Check(factor models.Factor, index []int) ([]int, error) {
+func (s *OracleStore) Check(factor models.Factor, processType task.FactorProcessType, index []int) ([]int, error) {
 	s.helper.Connect()
 	indexSet := mapset.NewSet()
 	for _, v := range index {
 		indexSet.Add(interface{}(v))
 	}
-	sqlStatement := fmt.Sprintf("SELECT DISTINCT TDATE FROM \"%s\"", s.trimIdentity(factor.ID))
+	processedTypeStr := s.getProcessedTypeStr(processType)
+	factorID := s.getFactorIndentity(factor, processType)
+	sqlStatement := fmt.Sprintf("SELECT DISTINCT TDATE FROM \"%s\" WHERE PROCESSEDTYPE='%s'", factorID, processedTypeStr)
 	rows, err := s.helper.DB.Query(sqlStatement)
 	empty := false
 	if err != nil {
@@ -225,13 +255,76 @@ func (s *OracleStore) handleUpdateResult() {
 	}
 }
 
-func (s *OracleStore) Update(factor models.Factor, factorValue models.FactorValue, replace bool) (int, error) {
+func (s *OracleStore) handleFetchResult() {
+	for result := range s.queueFetch.Output {
+		rep := result.Response
+		var ret celeryResult
+		if rep.Error != "" {
+			ret = celeryResult{
+				Data:  nil,
+				Error: errors.New(rep.Error),
+			}
+		} else {
+			data := models.FactorValue{}
+			err := utils.ParseFactorValue(rep.Result, &data)
+			if err != nil {
+				log.Error(err.Error())
+				ret = celeryResult{
+					Data:  nil,
+					Error: err,
+				}
+			}
+			ret = celeryResult{
+				Data:  data,
+				Error: err,
+			}
+		}
+		ch := s.getTaskChan(result.ID)
+		if ch != nil {
+			ch <- ret
+		} else {
+			log.Warning("Unrelated celery task %s of stores.oracle-fetch", result.ID)
+		}
+	}
+}
+
+func (s *OracleStore) Fetch(factor models.Factor, dateRange models.DateRange) (models.FactorValue, error) {
+	data := map[string][]interface{}{
+		"args": []interface{}{factor.ID, dateRange.Start, dateRange.End},
+	}
+	jsonData, err := json.Marshal(data)
+	s.taskFetchCount++
+	taskID := fmt.Sprintf("%s-%d-%d", s.taskFetchPrefix, time.Now().Unix(), s.taskFetchCount)
+	_, err = s.queueFetch.Publish(taskID, jsonData)
+	if err != nil {
+		return models.FactorValue{}, err
+	}
+	ch := make(chan celeryResult)
+	s.setTaskChan(taskID, ch)
+	defer s.removeTaskChan(taskID)
+	select {
+	case r := <-ch:
+		if r.Error != nil {
+			return models.FactorValue{}, r.Error
+		}
+		result, ok := r.Data.(models.FactorValue)
+		if !ok {
+			return models.FactorValue{}, fmt.Errorf("invalid fetch Result: %s", r)
+		}
+		return result, r.Error
+	case <-time.After(time.Duration(s.config.TaskFetchTimeout) * time.Second):
+		return models.FactorValue{}, fmt.Errorf("oracle fetch task timeout after %d seconds", s.config.TaskFetchTimeout)
+	}
+}
+
+func (s *OracleStore) Update(factor models.Factor, processType task.FactorProcessType, factorValue models.FactorValue, replace bool) (int, error) {
 	factorValueString, err := utils.PackFactorValue(factorValue)
 	if err != nil {
 		return 0, err
 	}
+	factorID := s.getFactorIndentity(factor, processType)
 	data := map[string][]interface{}{
-		"args": []interface{}{s.trimIdentity(factor.ID), factorValueString},
+		"args": []interface{}{factorID, factorValueString, string(processType)},
 	}
 	jsonData, err := json.Marshal(data)
 	s.taskUpdateCount++

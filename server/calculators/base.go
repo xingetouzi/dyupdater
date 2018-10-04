@@ -30,6 +30,7 @@ import (
 	"fxdayu.com/dyupdater/server/common"
 	"fxdayu.com/dyupdater/server/models"
 	"fxdayu.com/dyupdater/server/schedulers"
+	"fxdayu.com/dyupdater/server/task"
 	"fxdayu.com/dyupdater/server/utils"
 )
 
@@ -39,6 +40,7 @@ var log = utils.AppLogger
 type FactorCalculator interface {
 	common.Component
 	Cal(id string, factor models.Factor, dateRange models.DateRange) error
+	Process(id string, factor models.Factor, factorValue models.FactorValue, processType task.FactorProcessType) error
 	Subscribe(schedulers.TaskScheduler)
 }
 

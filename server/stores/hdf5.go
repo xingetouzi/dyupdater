@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"fxdayu.com/dyupdater/server/task"
+
 	"fxdayu.com/dyupdater/server/celery"
 	"fxdayu.com/dyupdater/server/common"
 	"fxdayu.com/dyupdater/server/models"
@@ -201,9 +203,17 @@ func (s *HDF5Store) handleFetchResult() {
 	}
 }
 
-func (s *HDF5Store) Check(factor models.Factor, index []int) ([]int, error) {
+func (s *HDF5Store) getFactorIndentity(factor models.Factor, processType task.FactorProcessType) string {
+	if processType == task.ProcessTypeNone {
+		return factor.ID
+	}
+	return factor.ID + "__" + string(processType)
+}
+
+func (s *HDF5Store) Check(factor models.Factor, processType task.FactorProcessType, index []int) ([]int, error) {
+	factorID := s.getFactorIndentity(factor, processType)
 	data := map[string][]interface{}{
-		"args": []interface{}{factor.ID, index},
+		"args": []interface{}{factorID, index},
 	}
 	jsonData, err := json.Marshal(data)
 	s.taskCheckCount++
@@ -222,7 +232,7 @@ func (s *HDF5Store) Check(factor models.Factor, index []int) ([]int, error) {
 		}
 		result, ok := r.Data.([]int)
 		if !ok {
-			return nil, fmt.Errorf("Invalid check Result: %v", r.Data)
+			return nil, fmt.Errorf("invalid check Result: %v", r.Data)
 		}
 		return result, r.Error
 	case <-time.After(time.Duration(s.config.TaskCheckTimeout) * time.Second):
@@ -230,13 +240,14 @@ func (s *HDF5Store) Check(factor models.Factor, index []int) ([]int, error) {
 	}
 }
 
-func (s *HDF5Store) Update(factor models.Factor, factorValue models.FactorValue, replace bool) (int, error) {
+func (s *HDF5Store) Update(factor models.Factor, processType task.FactorProcessType, factorValue models.FactorValue, replace bool) (int, error) {
 	factorValueString, err := utils.PackFactorValue(factorValue)
 	if err != nil {
 		return 0, err
 	}
+	factorID := s.getFactorIndentity(factor, processType)
 	data := map[string][]interface{}{
-		"args": []interface{}{factor.ID, factorValueString},
+		"args": []interface{}{factorID, factorValueString},
 	}
 	jsonData, err := json.Marshal(data)
 	s.taskUpdateCount++
@@ -255,7 +266,7 @@ func (s *HDF5Store) Update(factor models.Factor, factorValue models.FactorValue,
 		}
 		result, ok := r.Data.(int)
 		if !ok {
-			return 0, fmt.Errorf("Invalid update Result: %v", r.Data)
+			return 0, fmt.Errorf("invalid update Result: %v", r.Data)
 		}
 		return result, r.Error
 	case <-time.After(time.Duration(s.config.TaskUpdateTimeout) * time.Second):
@@ -284,11 +295,11 @@ func (s *HDF5Store) Fetch(factor models.Factor, dateRange models.DateRange) (mod
 		}
 		result, ok := r.Data.(models.FactorValue)
 		if !ok {
-			return models.FactorValue{}, fmt.Errorf("Invalid fetch Result: %s", r)
+			return models.FactorValue{}, fmt.Errorf("invalid fetch Result: %s", r)
 		}
 		return result, r.Error
 	case <-time.After(time.Duration(s.config.TaskFetchTimeout) * time.Second):
-		return models.FactorValue{}, fmt.Errorf("hdf5 fetch task timeout after %d seconds", s.config.TaskCheckTimeout)
+		return models.FactorValue{}, fmt.Errorf("hdf5 fetch task timeout after %d seconds", s.config.TaskFetchTimeout)
 	}
 }
 

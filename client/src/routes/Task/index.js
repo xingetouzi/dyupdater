@@ -15,11 +15,13 @@ const taskTypeText = {
   [taskType.CHECK]: '检查',
   [taskType.CAL]: '计算',
   [taskType.UPDATE]: '更新',
+  [taskType.PROCESS]: '后处理',
 };
 const taskTypeColor = {
-  [taskType.CHECK]: '#0033cc',
-  [taskType.CAL]: '#ff6600',
-  [taskType.UPDATE]: '#00cc00',
+  [taskType.CHECK]: '#6950a1',
+  [taskType.CAL]: '#ef4136',
+  [taskType.UPDATE]: '#1d953f',
+  [taskType.PROCESS]: '#e0861a',
 };
 const statusMap = {
   [taskState.PENDING]: 'processing',
