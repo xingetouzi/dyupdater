@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,8 @@ type oracleFactorValue struct {
 	RAWVALUE   float64
 }
 
+var oralcle_raw_value bool = false
+
 // OracleStore 是依托oracle数据库的因子存储。
 //
 // 因子数据将存放在与因子ID同名的表中。
@@ -71,6 +74,13 @@ type OracleStore struct {
 	taskUpdatePrefix string
 	taskFetchCount   int
 	taskUpdateCount  int
+}
+
+func init() {
+	i, err := strconv.Atoi(utils.GetEnv("ORACLE_RAW_VALUE", "0"))
+	if err != nil {
+		oralcle_raw_value = i != 0
+	}
 }
 
 // Init the OracleStore, will create connection pool.
@@ -144,7 +154,7 @@ func (s *OracleStore) trimIdentity(id string) string {
 }
 
 func (s *OracleStore) getFactorIndentity(factor models.Factor, processType task.FactorProcessType) string {
-	factorID := factor.ID
+	factorID := factor.Name
 	if processType == task.ProcessTypeNone {
 		factorID = strings.ToLower(factorID)
 	}
@@ -161,12 +171,15 @@ func (s *OracleStore) getProcessedTypeStr(processType task.FactorProcessType) st
 
 // Check factor data for given factor and daterange in OracleStore.
 func (s *OracleStore) Check(factor models.Factor, processType task.FactorProcessType, index []int) ([]int, error) {
+	processedTypeStr := s.getProcessedTypeStr(processType)
+	if processType == task.ProcessTypeNone && !oralcle_raw_value {
+		return []int{}, nil
+	}
 	s.helper.Connect()
 	indexSet := mapset.NewSet()
 	for _, v := range index {
 		indexSet.Add(interface{}(v))
 	}
-	processedTypeStr := s.getProcessedTypeStr(processType)
 	factorID := s.getFactorIndentity(factor, processType)
 	sqlStatement := fmt.Sprintf("SELECT DISTINCT TDATE FROM \"%s\" WHERE PROCESSEDTYPE='%s'", factorID, processedTypeStr)
 	rows, err := s.helper.DB.Query(sqlStatement)
@@ -290,7 +303,7 @@ func (s *OracleStore) handleFetchResult() {
 
 func (s *OracleStore) Fetch(factor models.Factor, dateRange models.DateRange) (models.FactorValue, error) {
 	data := map[string][]interface{}{
-		"args": []interface{}{factor.ID, dateRange.Start, dateRange.End},
+		"args": []interface{}{factor.Name, dateRange.Start, dateRange.End},
 	}
 	jsonData, err := json.Marshal(data)
 	s.taskFetchCount++
@@ -323,8 +336,9 @@ func (s *OracleStore) Update(factor models.Factor, processType task.FactorProces
 		return 0, err
 	}
 	factorID := s.getFactorIndentity(factor, processType)
-	data := map[string][]interface{}{
-		"args": []interface{}{factorID, factorValueString, string(processType)},
+	data := map[string]interface{}{
+		"args":   []interface{}{factorID, factorValueString, string(processType)},
+		"kwargs": map[string]string{"raw_name": factor.ID},
 	}
 	jsonData, err := json.Marshal(data)
 	s.taskUpdateCount++
@@ -362,7 +376,7 @@ func (s *OracleStore) Update(factor models.Factor, processType task.FactorProces
 // 		}
 // 		defer tx.Rollback()
 // 	}
-// 	factorID := s.trimIdentity(factor.ID)
+// 	factorID := s.trimIdentity(factor.Name)
 // 	stmtQuery := fmt.Sprintf("SELECT DISTINCT TDATE FROM \"%s\".\"%s\" WHERE TDATE >= %d AND TDATE <= %d", s.config.Db, factorID, start, end)
 // 	stmtDelete := fmt.Sprintf("DELETE FROM \"%s\".\"%s\" WHERE TDATE >= %d AND TDATE <= %d", s.config.Db, factorID, start, end)
 // 	var queryFunc func(query string, args ...interface{}) (*sql.Rows, error)
@@ -410,7 +424,7 @@ func (s *OracleStore) Update(factor models.Factor, processType task.FactorProces
 // 	timeInsert := time.Now()
 // 	// prepare
 // 	var stmt *sql.Stmt
-// 	stmt, err = prepareFunc(fmt.Sprintf("INSERT INTO \"%s\".\"%s\" (TDATE, SYMBOLCODE, RAWVALUE) VALUES (:tDate, :symbolCode , :rawValue)", s.config.Db, factor.ID))
+// 	stmt, err = prepareFunc(fmt.Sprintf("INSERT INTO \"%s\".\"%s\" (TDATE, SYMBOLCODE, RAWVALUE) VALUES (:tDate, :symbolCode , :rawValue)", s.config.Db, factor.Name))
 // 	if err != nil {
 // 		return 0, err
 // 	}
@@ -438,7 +452,7 @@ func (s *OracleStore) Update(factor models.Factor, processType task.FactorProces
 // 		return 0, err
 // 	}
 // 	count := len(newRows)
-// 	log.Debugf("Updated %d rows in %s.%s from %d to %d, cost: %.3f seconds", count, s.config.Db, factor.ID, start, end, time.Since(timeInsert).Seconds())
+// 	log.Debugf("Updated %d rows in %s.%s from %d to %d, cost: %.3f seconds", count, s.config.Db, factor.Name, start, end, time.Since(timeInsert).Seconds())
 // 	return count, err
 // }
 
@@ -448,7 +462,7 @@ func (s *OracleStore) Update(factor models.Factor, processType task.FactorProces
 // 		return 0, nil
 // 	}
 // 	s.helper.Connect()
-// 	err := s.creatTable(factor.ID)
+// 	err := s.creatTable(factor.Name)
 // 	if err != nil {
 // 		return 0, err
 // 	}

@@ -70,7 +70,7 @@ func (calculator *CeleryCalculator) Process(id string, factor models.Factor, fac
 	if err != nil {
 		return err
 	}
-	data := map[string][]interface{}{"args": []interface{}{factor.ID, factorValueStr, string(processType)}}
+	data := map[string][]interface{}{"args": []interface{}{factor.Name, factorValueStr, string(processType)}}
 	jsonData, err := json.Marshal(data)
 	_, err = calculator.queueProcess.Publish(id, jsonData)
 	return err

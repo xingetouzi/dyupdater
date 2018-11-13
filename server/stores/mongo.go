@@ -55,9 +55,9 @@ func (store *MongoStore) Init(config *viper.Viper) {
 
 func (store *MongoStore) getFactorIndentity(factor models.Factor, processType task.FactorProcessType) string {
 	if processType == task.ProcessTypeNone {
-		return factor.ID
+		return factor.Name
 	}
-	return factor.ID + "__" + string(processType)
+	return factor.Name + "__" + string(processType)
 }
 
 func (store *MongoStore) getFactorDateSet(factor models.Factor, processType task.FactorProcessType) (mapset.Set, error) {
@@ -162,7 +162,7 @@ func (store *MongoStore) Check(factor models.Factor, processType task.FactorProc
 func (store *MongoStore) Fetch(factor models.Factor, dateRange models.DateRange) (models.FactorValue, error) {
 	conn := store.session.Clone()
 	defer conn.Close()
-	col := conn.DB(store.config.Db).C(factor.ID)
+	col := conn.DB(store.config.Db).C(factor.Name)
 	start, err := utils.ItoDate(dateRange.Start)
 	end, err := utils.ItoDate(dateRange.End)
 	filter := bson.M{"datetime": bson.M{"$gte": start, "$lte": end}}
@@ -184,7 +184,7 @@ func (store *MongoStore) Fetch(factor models.Factor, dateRange models.DateRange)
 		}
 		dtTime, ok := dt.(time.Time)
 		if !ok {
-			return models.FactorValue{}, fmt.Errorf("unvalid factor values data in %s: %v", factor.ID, dt)
+			return models.FactorValue{}, fmt.Errorf("unvalid factor values data in %s: %v", factor.Name, dt)
 		}
 		dtPoint, _ := utils.Datetoi(dtTime)
 		datetime = append(datetime, dtPoint)
@@ -200,7 +200,7 @@ func (store *MongoStore) Fetch(factor models.Factor, dateRange models.DateRange)
 				}
 				valuePoint, ok := v.(float64)
 				if !ok {
-					return models.FactorValue{}, fmt.Errorf("unvalid factor values data in %s: %v", factor.ID, v)
+					return models.FactorValue{}, fmt.Errorf("unvalid factor values data in %s: %v", factor.Name, v)
 				}
 				values[k] = append(vSlice, valuePoint)
 			}

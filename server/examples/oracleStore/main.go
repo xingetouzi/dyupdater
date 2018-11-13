@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 
+	"fxdayu.com/dyupdater/server/task"
+
 	"fxdayu.com/dyupdater/server/stores"
 
 	"github.com/spf13/viper"
@@ -18,7 +20,7 @@ func main() {
 	store := new(stores.OracleStore)
 	store.Init(config)
 	factor := models.Factor{ID: "test", Formula: ""}
-	lost, err := store.Check(factor, []int{20160101})
+	lost, err := store.Check(factor, task.ProcessTypeNone, []int{20160101})
 	if err != nil {
 		log.Panic(err)
 	} else {
@@ -31,6 +33,6 @@ func main() {
 	for _, s := range symbols {
 		factorValues.Values[s] = make([]float64, len(lost))
 	}
-	count, err := store.Update(factor, factorValues, false)
+	count, err := store.Update(factor, task.ProcessTypeNone, factorValues, false)
 	fmt.Println(count)
 }

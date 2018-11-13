@@ -75,7 +75,7 @@ func (service *FactorServices) GetScheduler() schedulers.TaskScheduler {
 func (service *FactorServices) mapFactor(store string, factor models.Factor) (newFactor models.Factor) {
 	newFactor = factor
 	if service.mapper != nil {
-		newFactor.ID = service.mapper.Map(store, newFactor.ID)
+		newFactor.Name = service.mapper.Map(store, newFactor.Name)
 	}
 	return
 }
@@ -93,7 +93,7 @@ func (service *FactorServices) Check(factor models.Factor, dateRange models.Date
 }
 
 func (service *FactorServices) CheckWithLock(factor models.Factor, dateRange models.DateRange) *task.TaskFuture {
-	if val, ok := service.count.Load(factor.ID); ok {
+	if val, ok := service.count.Load(factor.Name); ok {
 		count := val.(int)
 		if count > 0 {
 			return nil
@@ -108,7 +108,7 @@ func (service *FactorServices) CheckWithLock(factor models.Factor, dateRange mod
 	ti := task.NewCheckTaskInput(stores, factor, dateRange, task.ProcessTypeNone)
 	tf := service.scheduler.Publish(nil, ti)
 	if tf != nil {
-		service.count.Store(factor.ID, 1)
+		service.count.Store(factor.Name, 1)
 	}
 	return tf
 }

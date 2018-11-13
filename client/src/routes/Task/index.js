@@ -137,20 +137,10 @@ export default class TaskTableList extends PureComponent {
       {
         title: '类型',
         dataIndex: 'type',
-        filters: [
-          {
-            text: taskTypeText[0],
-            value: 0,
-          },
-          {
-            text: taskTypeText[1],
-            value: 1,
-          },
-          {
-            text: taskTypeText[2],
-            value: 2,
-          },
-        ],
+        filters: Object.keys(taskTypeText).map(i => ({
+          text: taskTypeText[i],
+          value: i,
+        })),
         render: item => (
           <div style={{ color: taskTypeColor[item] }}>{taskTypeText[item] || 'UNKNOWN'}</div>
         ),
@@ -188,20 +178,10 @@ export default class TaskTableList extends PureComponent {
       {
         title: '状态',
         dataIndex: 'status',
-        filters: [
-          {
-            text: statusText[0],
-            value: 0,
-          },
-          {
-            text: statusText[1],
-            value: 1,
-          },
-          {
-            text: statusText[2],
-            value: 2,
-          },
-        ],
+        filters: Object.keys(statusText).map(i => ({
+          text: statusText[i],
+          value: i,
+        })),
         render(item, record) {
           return (
             <div>

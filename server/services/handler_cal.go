@@ -27,7 +27,7 @@ func (handler *calTaskHandler) Handle(tf *task.TaskFuture) error {
 		if !ok {
 			panic(fmt.Errorf("store not found: %s", syncFrom))
 		}
-		log.Infof("(Task %s) { %s }  [ %d , %d ] Fetch begin.", tf.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End)
+		log.Infof("(Task %s) { %s }  [ %d , %d ] Fetch begin.", tf.ID, data.GetFactorID(), data.GetStartTime(), data.GetEndTime())
 		if values, err := store.Fetch(service.mapFactor(syncFrom, data.Factor), data.DateRange); err != nil {
 			return err
 		} else {
@@ -45,7 +45,7 @@ func (handler *calTaskHandler) Handle(tf *task.TaskFuture) error {
 	if !ok {
 		return fmt.Errorf("calculator not found: %s", data.Calculator)
 	}
-	log.Infof("(Task %s) { %s }  [ %d , %d ] Cal begin.", tf.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End)
+	log.Infof("(Task %s) { %s }  [ %d , %d ] Cal begin.", tf.ID, data.GetFactorID(), data.GetStartTime(), data.GetEndTime())
 	err := calculator.Cal(tf.ID, data.Factor, data.DateRange)
 	if err != nil {
 		return err
@@ -95,7 +95,7 @@ func (handler *calTaskHandler) OnFailed(tf task.TaskFuture, err error) {
 	if !ok {
 		return
 	}
-	log.Errorf("(Task %s) { %s } [ %d , %d ] Cal failed: %s", tf.ID, data.Factor.ID, data.DateRange.Start, data.DateRange.End, err)
+	log.Errorf("(Task %s) { %s } [ %d , %d ] Cal failed: %s", tf.ID, data.GetFactorID(), data.GetStartTime(), data.GetEndTime(), err)
 }
 
 func (handler *calTaskHandler) GetTaskType() task.TaskType {

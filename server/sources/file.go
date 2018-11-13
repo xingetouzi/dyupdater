@@ -94,6 +94,7 @@ func (source *FileSystemSource) Fetch() []models.Factor {
 			return ret
 		}
 		factor.Archive = base64.StdEncoding.EncodeToString(fileContent)
+		factor.Name = factorName
 		factor.ID = factorName
 		factors = append(factors, factor)
 		return ret

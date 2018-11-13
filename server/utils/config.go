@@ -11,6 +11,7 @@ type globalConfigData struct {
 	MinCalDuration int    `mapstructure:"min-cal-duration"`
 	MaxCalDuration int    `mapstructrue:"max-cal-duration"`
 	SyncFrom       string `mapstructrue:"sync-from"`
+	ProcessFrom    string `mapstructrue:"process-from"`
 }
 
 // GlobalConfig 是dyupdater全局配置，主要是一些计算相关的参数。
@@ -34,10 +35,11 @@ var globalConfigInstance *GlobalConfig
 
 func init() {
 	globalConfigInstance = &GlobalConfig{}
-	globalConfigInstance.CalStartDate, _ = strconv.Atoi(GetEnv("CAL_START_DATE", strconv.Itoa(20100101)))
-	globalConfigInstance.MinCalDuration, _ = strconv.Atoi(GetEnv("MIN_CAL_DURATION", strconv.Itoa(30*24*60*60)))
-	globalConfigInstance.MaxCalDuration, _ = strconv.Atoi(GetEnv("MAX_CAL_DURATION", strconv.Itoa(5*365*24*60*60)))
-	globalConfigInstance.SyncFrom = GetEnv("SYNC_FROM", "")
+	globalConfigInstance.CalStartDate, _ = strconv.Atoi(GetEnv("DYUPDATER_CAL_START_DATE", strconv.Itoa(20100101)))
+	globalConfigInstance.MinCalDuration, _ = strconv.Atoi(GetEnv("DYUPDATER_MIN_CAL_DURATION", strconv.Itoa(30*24*60*60)))
+	globalConfigInstance.MaxCalDuration, _ = strconv.Atoi(GetEnv("DYUPDATER_MAX_CAL_DURATION", strconv.Itoa(5*365*24*60*60)))
+	globalConfigInstance.SyncFrom = GetEnv("DYUPDATER_SYNC_FROM", "")
+	globalConfigInstance.ProcessFrom = GetEnv("DYUPDATER_PROCESS_FROM", "")
 }
 
 // GetGlobalConfig 用于获取全局配置
@@ -48,6 +50,7 @@ func GetGlobalConfig() *GlobalConfig {
 func (gc *GlobalConfig) Init(config *viper.Viper) {
 	config.Unmarshal(&gc.globalConfigData)
 	gc.SyncFrom = config.GetString("sync-from")
+	gc.ProcessFrom = config.GetString("process-from")
 }
 
 func (gc *GlobalConfig) GetCalStartDate() int {
@@ -66,6 +69,9 @@ func (gc *GlobalConfig) GetSyncFrom() string {
 	return gc.globalConfigData.SyncFrom
 }
 
-func (gc *GlobalConfig) Close() {
+func (gc *GlobalConfig) GetProcessFrom() string {
+	return gc.globalConfigData.ProcessFrom
+}
 
+func (gc *GlobalConfig) Close() {
 }

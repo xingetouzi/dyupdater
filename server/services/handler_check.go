@@ -82,6 +82,7 @@ func (handler *checkTaskHandler) OnSuccess(tf task.TaskFuture, r task.TaskResult
 		log.Infof("(Task %s) { %s } [ %d , %d ] Check finish, missing data in (%d ... %d).", r.ID, data.GetFactorID(), data.GetStartTime(), data.GetEndTime(), first, last)
 		maxCalDuration := utils.GetGlobalConfig().GetMaxCalDuration()
 		minCalDuration := utils.GetGlobalConfig().GetMinCalDuration()
+		calStartDate := utils.GetGlobalConfig().GetCalStartDate()
 		if len(result.Datetimes) > 0 {
 			var ranges []models.DateRange
 			var current *models.DateRange
@@ -95,6 +96,9 @@ func (handler *checkTaskHandler) OnSuccess(tf task.TaskFuture, r task.TaskResult
 					if int(e.Sub(s).Seconds()) <= maxCalDuration {
 						continue
 					} else {
+						if calStartDate >= current.Start {
+							current.Start = calStartDate
+						}
 						ranges = append(ranges, *current)
 						current = nil
 					}
@@ -106,6 +110,9 @@ func (handler *checkTaskHandler) OnSuccess(tf task.TaskFuture, r task.TaskResult
 				if int(e.Sub(s).Seconds()) <= minCalDuration {
 					newS := e.Add(-time.Duration(minCalDuration) * time.Second)
 					current.Start, _ = utils.Datetoi(newS)
+				}
+				if calStartDate >= current.Start {
+					current.Start = calStartDate
 				}
 				ranges = append(ranges, *current)
 			}
@@ -119,20 +126,29 @@ func (handler *checkTaskHandler) OnSuccess(tf task.TaskFuture, r task.TaskResult
 			} else {
 				// process
 				syncFrom := utils.GetGlobalConfig().GetSyncFrom()
+				processFrom := utils.GetGlobalConfig().GetProcessFrom()
 				var name string
 				if syncFrom != "" {
 					name = syncFrom
-				} else {
-					name = data.Stores[0]
+				} else if processFrom != "" {
+					name = processFrom
 				}
-				store, _ := service.stores[name]
-				index := service.indexer.GetIndex(data.DateRange)
-				factorValue, err := store.Fetch(service.mapFactor(name, data.Factor), models.DateRange{Start: index[0], End: index[len(index)-1]})
-				if err != nil {
-					return err
+				for _, dateRange := range ranges {
+					var factorValue models.FactorValue
+					if name != "" {
+						var err error
+						store, _ := service.stores[name]
+						index := service.indexer.GetIndex(dateRange)
+						factorValue, err = store.Fetch(service.mapFactor(name, data.Factor), models.DateRange{Start: index[0], End: index[len(index)-1]})
+						if err != nil {
+							return err
+						}
+					} else {
+						factorValue.Datetime = []int{dateRange.Start, dateRange.End}
+					}
+					ti := task.NewProcessTaskInput(calculators.DefaultCalculator, data.Factor, factorValue, data.ProcessType)
+					service.scheduler.Publish(&tf, ti)
 				}
-				ti := task.NewProcessTaskInput(calculators.DefaultCalculator, data.Factor, factorValue, data.ProcessType)
-				service.scheduler.Publish(&tf, ti)
 			}
 		}
 	} else {

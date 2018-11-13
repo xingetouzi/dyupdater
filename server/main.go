@@ -31,6 +31,8 @@ func init() {
 	f1.StringVarP(&host, "host", "H", "127.0.0.1", "Dashboard's host.")
 	f1.IntVarP(&port, "port", "p", 19328, "Dashboard's port.")
 	f1.BoolVarP(&initCheck, "check", "C", false, "Whether to do a initial checking after run.")
+	f1.IntVarP(&startTime, "start", "s", 0, "The check's start date in format \"20060102\", default will be cal-start-date in configation.")
+	f1.IntVarP(&endTime, "end", "e", 0, "The check's end date in format \"20060102\", 0 means up to today.")
 	f1.SortFlags = false
 	f2 = flag.NewFlagSet("dyupdater check", flag.ContinueOnError)
 	f2.StringVarP(&logPath, "logfile", "l", "./dyupdater.log", "Set the logfile path.")

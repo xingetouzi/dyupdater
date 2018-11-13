@@ -205,9 +205,9 @@ func (s *HDF5Store) handleFetchResult() {
 
 func (s *HDF5Store) getFactorIndentity(factor models.Factor, processType task.FactorProcessType) string {
 	if processType == task.ProcessTypeNone {
-		return factor.ID
+		return factor.Name
 	}
-	return factor.ID + "__" + string(processType)
+	return factor.Name + "__" + string(processType)
 }
 
 func (s *HDF5Store) Check(factor models.Factor, processType task.FactorProcessType, index []int) ([]int, error) {
@@ -276,7 +276,7 @@ func (s *HDF5Store) Update(factor models.Factor, processType task.FactorProcessT
 
 func (s *HDF5Store) Fetch(factor models.Factor, dateRange models.DateRange) (models.FactorValue, error) {
 	data := map[string][]interface{}{
-		"args": []interface{}{factor.ID, dateRange.Start, dateRange.End},
+		"args": []interface{}{factor.Name, dateRange.Start, dateRange.End},
 	}
 	jsonData, err := json.Marshal(data)
 	s.taskFetchCount++

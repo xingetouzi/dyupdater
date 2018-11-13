@@ -64,7 +64,7 @@ type BaseFactorTaskPayload struct {
 }
 
 func (payload BaseFactorTaskPayload) GetFactorID() string {
-	factorID := payload.Factor.ID
+	factorID := payload.Factor.Name
 	if payload.ProcessType != ProcessTypeNone {
 		factorID += fmt.Sprintf("[%s]", string(payload.ProcessType))
 	}

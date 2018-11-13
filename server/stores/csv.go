@@ -68,15 +68,15 @@ func (s *CSVStore) Init(config *viper.Viper) {
 }
 
 func (s *CSVStore) getCSVPath(factor models.Factor) string {
-	p := path.Join(s.config.Path, factor.ID+".csv")
+	p := path.Join(s.config.Path, factor.Name+".csv")
 	return p
 }
 
 func (s *CSVStore) getLock(factor models.Factor) *sync.RWMutex {
-	lock, ok := s.locks[factor.ID]
+	lock, ok := s.locks[factor.Name]
 	if !ok {
 		lock = &sync.RWMutex{}
-		s.locks[factor.ID] = lock
+		s.locks[factor.Name] = lock
 	}
 	return lock
 }
@@ -202,7 +202,7 @@ func (s *CSVStore) Update(factor models.Factor, factorValue models.FactorValue, 
 		}
 	}
 	if len(newRecords) == 0 {
-		log.Debugf("CSV data of %s no need to be update.", factor.ID)
+		log.Debugf("CSV data of %s no need to be update.", factor.Name)
 		return 0, nil
 	}
 	start := newRecords[0].TDate
@@ -212,7 +212,7 @@ func (s *CSVStore) Update(factor models.Factor, factorValue models.FactorValue, 
 	s1 := records[:startIndex]
 	s2 := newRecords
 	s3 := records[endIndex:]
-	log.Debugf("Update CSV data of %s in [%d, %d]", factor.ID, newRecords[0].TDate, newRecords[len(newRecords)-1].TDate)
+	log.Debugf("Update CSV data of %s in [%d, %d]", factor.Name, newRecords[0].TDate, newRecords[len(newRecords)-1].TDate)
 	err := s.writeFactor(factor, s1, s2, s3)
 	if err != nil {
 		return 0, err

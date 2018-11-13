@@ -56,7 +56,8 @@ func (source *MysqlSource) Fetch() []models.Factor {
 
 	for rows.Next() {
 		factor := models.Factor{}
-		err2 := rows.Scan(&factor.ID, &factor.Formula)
+		err2 := rows.Scan(&factor.Name, &factor.Formula)
+		factor.ID = factor.Name
 		// Exit if we get an error
 		if err2 != nil {
 			log.Panic(err2)
